@@ -1,6 +1,5 @@
 package com.vireal.services
 
-
 import com.vireal.data.models.QueryResponse
 
 class QueryService(
@@ -9,19 +8,18 @@ class QueryService(
 ) {
 
     suspend fun processQuery(userId: Long, question: String): QueryResponse {
-        // Извлекаем ключевые слова из вопроса (простой подход)
-        val keywords = extractKeywords(question)
+        // Используем гибридный поиск (векторный + текстовый)
+        val searchResult = notesService.searchNotes(userId, question)
 
-        // Ищем релевантные записи
-        val searchResult = notesService.searchNotes(userId, keywords)
+        // Если ничего не найдено, берем последние записи
+        val notes = searchResult.notes.ifEmpty {
+            println("No relevant notes found, using recent notes")
+            notesService.getUserNotes(userId).take(5)
+        }
 
-        // Формируем контекст из найденных записей
-        val context = if (searchResult.notes.isNotEmpty()) {
-            searchResult.notes.joinToString("\n\n") { note ->
-                "- ${note.content}"
-            }
-        } else {
-            ""
+        // Формируем контекст
+        val context = notes.joinToString("\n\n") { note ->
+            "- ${note.content}"
         }
 
         // Получаем ответ от LLM
@@ -33,35 +31,7 @@ class QueryService(
 
         return QueryResponse(
             answer = answer,
-            sources = searchResult.notes.map { it.content.take(100) + "..." }
+            sources = notes.map { it.content.take(100) + "..." }
         )
-    }
-
-    private fun extractKeywords(text: String): String {
-        // Расширенный список стоп-слов для русского и английского языков
-        val stopWords = setOf(
-            // Русские стоп-слова
-            "что", "как", "какой", "какая", "какие", "где", "когда", "почему",
-            "зачем", "можно", "ли", "есть", "это", "такое", "в", "на", "с",
-            "у", "к", "по", "для", "из", "от", "до", "о", "об", "про",
-            "меня", "тебя", "его", "её", "нас", "вас", "их", "мой", "твой",
-            "наш", "ваш", "их", "я", "ты", "он", "она", "мы", "вы", "они",
-            "быть", "иметь", "делать", "говорить", "знать", "хотеть", "мочь",
-            // Английские стоп-слова
-            "what", "how", "where", "when", "why", "who", "which", "is", "are", "was", "were",
-            "am", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would",
-            "could", "should", "may", "might", "can", "must", "shall", "a", "an", "the", "and", "or",
-            "but", "in", "on", "at", "to", "for", "of", "with", "by", "from", "up", "down", "out",
-            "off", "over", "under", "again", "further", "then", "once", "here", "there", "when",
-            "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other",
-            "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-            "my", "your", "his", "her", "its", "our", "their", "me", "you", "him", "us", "them"
-        )
-
-        return text.lowercase()
-            .replace(Regex("[?!.,;:()]"), " ") // Убираем знаки препинания
-            .split(Regex("\\s+"))
-            .filter { it.length > 1 && it !in stopWords } // Изменили с > 2 на > 1
-            .joinToString(" ")
     }
 }
