@@ -5,6 +5,7 @@ class TagExtractionService {
     // Паттерны для быстрого локального извлечения тегов
     private val categoryPatterns = mapOf(
         "work" to listOf("встреча", "проект", "задача", "работа", "meeting", "project", "task"),
+        "music" to listOf("музыкальный", "синтезатор", "гитара", "звук", "music", "sound", "synth", "guitar", "piano"),
         "personal" to listOf("личное", "семья", "друзья", "хобби", "personal", "family"),
         "finance" to listOf("деньги", "бюджет", "расходы", "доходы", "money", "budget"),
         "tech" to listOf("код", "программирование", "разработка", "kotlin", "api", "база данных"),
