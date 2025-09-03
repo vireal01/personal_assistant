@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15  # Образ с предустановленным pgvector
     container_name: knowledge_base_postgres
     environment:
       POSTGRES_DB: knowledge_base
