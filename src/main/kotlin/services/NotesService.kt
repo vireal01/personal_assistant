@@ -1,44 +1,76 @@
 package com.vireal.services
 
-import com.vireal.data.models.*
+import com.vireal.data.models.CreateNoteResponse
+import com.vireal.data.models.Note
+import com.vireal.data.models.SearchResult
 import com.vireal.data.repository.NotesRepository
 import com.vireal.data.repository.VectorSearchRepository
+import kotlinx.coroutines.*
+import java.util.UUID
 
 class NotesService(
-    private val repository: NotesRepository = NotesRepository(),
+    private val noteRepository: NotesRepository = NotesRepository(),
     private val vectorRepository: VectorSearchRepository = VectorSearchRepository(),
-    private val embeddingService: EmbeddingService = EmbeddingService()
+    private val embeddingService: EmbeddingService = EmbeddingService(),
+    private val tagService: TagExtractionService = TagExtractionService()
 ) {
+
+    // Корутин скоуп для фоновых задач
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Очередь для асинхронной обработки embeddings
+    private val embeddingQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<UUID, String>>()
 
     suspend fun addNote(userId: Long, content: String): CreateNoteResponse {
         return try {
-            println("=== NotesService.addNote called ===")
-            println("userId: $userId, content: '${content.take(50)}...'")
+            // 1. Извлекаем теги и категорию
+            val (tags, category) = tagService.extractTagsAndCategory(content)
 
-            // 1. Создаем запись
-            val noteId = repository.createNote(userId, content)
-            println("Note created with ID: $noteId")
+            // 2. Создаем заметку в БД
+            val noteId = noteRepository.createNoteWithMetadata(userId, content, tags, category)
 
-            // 2. Создаем embedding
-            println("Creating embedding...")
-            val embedding = embeddingService.createEmbedding(content)
+            // 3. Генерируем embedding синхронно или асинхронно
+            val generateAsync = System.getenv("ASYNC_EMBEDDING")?.toBoolean() ?: false
 
-            if (embedding != null) {
-                println("Embedding created, size: ${embedding.size}")
-                val updated = vectorRepository.updateEmbedding(noteId, embedding)
-                println("Embedding saved to DB: $updated")
+            if (generateAsync) {
+                // Асинхронная генерация в фоне
+                serviceScope.launch {
+                    try {
+                        val embedding = embeddingService.createEmbedding(content)
+                        if (embedding != null) {
+                            vectorRepository.updateEmbedding(noteId, embedding)
+                            println("Embedding updated asynchronously for note: $noteId")
+                        }
+                    } catch (e: Exception) {
+                        println("Error creating embedding for note $noteId: ${e.message}")
+                    }
+                }
+
+                CreateNoteResponse(
+                    success = true,
+                    noteId = noteId.toString(),
+                    message = "Запись добавлена (embedding создается в фоне)"
+                )
             } else {
-                println("WARNING: Embedding is null!")
-            }
+                // Синхронная генерация - ждем результат
+                val embedding = try {
+                    embeddingService.createEmbedding(content)
+                } catch (e: Exception) {
+                    println("Error creating embedding: ${e.message}")
+                    null
+                }
 
-            CreateNoteResponse(
-                success = true,
-                noteId = noteId.toString(),
-                message = "Запись успешно добавлена"
-            )
+                if (embedding != null) {
+                    vectorRepository.updateEmbedding(noteId, embedding)
+                }
+
+                CreateNoteResponse(
+                    success = true,
+                    noteId = noteId.toString(),
+                    message = if (embedding != null) "Запись добавлена с embedding" else "Запись добавлена без embedding"
+                )
+            }
         } catch (e: Exception) {
-            println("ERROR in addNote: ${e.message}")
-            e.printStackTrace()
             CreateNoteResponse(
                 success = false,
                 message = "Ошибка: ${e.message}"
@@ -46,12 +78,153 @@ class NotesService(
         }
     }
 
+    suspend fun createNoteWithMetadata(
+        userId: Long,
+        content: String,
+        tags: List<String>?,
+        category: String?,
+        generateEmbedding: Boolean = true
+    ): CreateNoteResponse {
+        return try {
+            // Создаем заметку
+            val noteId = noteRepository.createNoteWithMetadata(userId, content, tags, category)
+
+            // Генерируем embedding если нужно
+            if (generateEmbedding) {
+                val embedding = try {
+                    embeddingService.createEmbedding(content)
+                } catch (e: Exception) {
+                    println("Error creating embedding: ${e.message}")
+                    null
+                }
+
+                if (embedding != null) {
+                    vectorRepository.updateEmbedding(noteId, embedding)
+                }
+            }
+
+            CreateNoteResponse(
+                success = true,
+                noteId = noteId.toString(),
+                message = "Запись добавлена с метаданными"
+            )
+        } catch (e: Exception) {
+            CreateNoteResponse(
+                success = false,
+                message = "Ошибка: ${e.message}"
+            )
+        }
+    }
+
+    // Обработка заметок без embeddings
+    suspend fun processNotesWithoutEmbeddings(userId: Long): Int {
+        val notesWithoutEmbeddings = vectorRepository.getNotesWithoutEmbeddings(userId, limit = 100)
+
+        println("Found ${notesWithoutEmbeddings.size} notes without embeddings")
+
+        if (notesWithoutEmbeddings.isEmpty()) {
+            return 0
+        }
+
+        // Обрабатываем батчами для эффективности
+        val batchSize = 10
+        var processedCount = 0
+
+        notesWithoutEmbeddings.chunked(batchSize).forEach { batch ->
+            val texts = batch.map { it.second }
+            val embeddings = try {
+                embeddingService.createEmbeddings(texts)
+            } catch (e: Exception) {
+                println("Error creating batch embeddings: ${e.message}")
+                null
+            }
+
+            if (embeddings != null) {
+                val updates = batch.zip(embeddings).map { (note, embedding) ->
+                    note.first to embedding
+                }
+
+                val updated = vectorRepository.updateEmbeddingsBatch(updates)
+                processedCount += updated
+                println("Updated $updated embeddings in batch")
+            } else {
+                // Если батч не удался, пробуем по одному
+                for ((noteId, content) in batch) {
+                    val embedding = try {
+                        embeddingService.createEmbedding(content)
+                    } catch (e: Exception) {
+                        println("Error creating embedding for note $noteId: ${e.message}")
+                        null
+                    }
+
+                    if (embedding != null) {
+                        vectorRepository.updateEmbedding(noteId, embedding)
+                        processedCount++
+                        println("Updated embedding for note: $noteId")
+                    }
+                }
+            }
+        }
+
+        return processedCount
+    }
+
     suspend fun searchNotes(userId: Long, query: String): SearchResult {
-        val hybridSearch = HybridSearchService(repository, vectorRepository, embeddingService)
+        val hybridSearch = HybridSearchService(noteRepository, vectorRepository, embeddingService)
         return hybridSearch.search(userId, query)
     }
 
     suspend fun getUserNotes(userId: Long): List<Note> {
-        return repository.getUserNotes(userId)
+        return noteRepository.getUserNotes(userId)
+    }
+
+    // Обновление заметки с перегенерацией embedding
+    suspend fun updateNote(
+        noteId: UUID,
+        content: String? = null,
+        tags: List<String>? = null,
+        category: String? = null,
+        regenerateEmbedding: Boolean = false
+    ): Boolean {
+        val updated = noteRepository.updateNote(noteId, content, tags, category)
+
+        if (updated && regenerateEmbedding && content != null) {
+            val embedding = try {
+                embeddingService.createEmbedding(content)
+            } catch (e: Exception) {
+                println("Error regenerating embedding: ${e.message}")
+                null
+            }
+
+            if (embedding != null) {
+                vectorRepository.updateEmbedding(noteId, embedding)
+            }
+        }
+
+        return updated
+    }
+
+    // Метод для ручной генерации embedding для конкретной заметки
+    suspend fun generateEmbeddingForNote(noteId: UUID): Boolean {
+        val note = noteRepository.getNoteById(noteId) ?: return false
+
+        val embedding = try {
+            embeddingService.createEmbedding(note.content)
+        } catch (e: Exception) {
+            println("Error creating embedding for note $noteId: ${e.message}")
+            null
+        }
+
+        return if (embedding != null) {
+            vectorRepository.updateEmbedding(noteId, embedding)
+        } else {
+            false
+        }
+    }
+
+    // Очистка ресурсов при остановке сервиса
+    fun shutdown() {
+        serviceScope.cancel()
+        embeddingService.close()
     }
 }

@@ -16,12 +16,19 @@ import kotlinx.serialization.json.Json
 data class EmbeddingRequest(
     val model: String = "text-embedding-3-small",
     val input: String,
-    val encoding_format: String? = "float" // Добавлено опциональное поле
+    val encoding_format: String? = "float"
+)
+
+@Serializable
+data class EmbeddingBatchRequest(
+    val model: String = "text-embedding-3-small",
+    val input: List<String>,  // Правильный тип для батча
+    val encoding_format: String? = "float"
 )
 
 @Serializable
 data class EmbeddingResponse(
-    val `object`: String, // Сделано обязательным, так как всегда возвращается "list"
+    val `object`: String,
     val data: List<EmbeddingData>,
     val model: String,
     val usage: EmbeddingUsage
@@ -29,7 +36,7 @@ data class EmbeddingResponse(
 
 @Serializable
 data class EmbeddingData(
-    val `object`: String, // Сделано обязательным, всегда "embedding"
+    val `object`: String,
     val index: Int,
     val embedding: List<Float>
 )
@@ -55,8 +62,6 @@ class EmbeddingService {
 
     private val apiKey = System.getenv("OPENAI_API_KEY") ?: ""
     private val apiUrl = "https://api.openai.com/v1/embeddings"
-
-    // Используем правильную переменную окружения для embedding модели
     private val embeddingModel = System.getenv("OPENAI_EMBEDDING_MODEL") ?: MODEL_3_SMALL
 
     private val client = HttpClient(CIO) {
@@ -64,7 +69,7 @@ class EmbeddingService {
             json(Json {
                 ignoreUnknownKeys = true
                 isLenient = true
-                encodeDefaults = true // Для включения значений по умолчанию
+                encodeDefaults = true
             })
         }
         install(Logging) {
@@ -81,21 +86,13 @@ class EmbeddingService {
         model: String = embeddingModel,
         encodingFormat: String = "float"
     ): List<Float>? {
-        if (apiKey.isEmpty() || apiKey == "test_key") {
+        if (!isApiKeyValid()) {
             println("Warning: OpenAI API key not configured, skipping embedding creation")
             return null
         }
 
         return try {
-            // Ограничиваем длину текста в зависимости от модели
-            val maxChars = when (model) {
-                MODEL_ADA_002 -> 30000 // примерно ~8000 токенов
-                MODEL_3_SMALL -> 30000
-                MODEL_3_LARGE -> 30000
-                else -> 8000 // безопасное значение по умолчанию
-            }
-
-            val truncatedText = text.take(maxChars)
+            val truncatedText = truncateText(text, model)
 
             val response = client.post(apiUrl) {
                 setBody(EmbeddingRequest(
@@ -134,7 +131,7 @@ class EmbeddingService {
         model: String = embeddingModel,
         encodingFormat: String = "float"
     ): List<List<Float>>? {
-        if (apiKey.isEmpty() || apiKey == "test_key") {
+        if (!isApiKeyValid()) {
             println("Warning: OpenAI API key not configured, skipping embeddings creation")
             return null
         }
@@ -144,18 +141,22 @@ class EmbeddingService {
         }
 
         // OpenAI поддерживает до 2048 inputs в одном запросе
-        if (texts.size > 2048) {
-            println("Warning: Too many texts (${texts.size}), processing only first 2048")
+        val batchLimit = 2048
+        if (texts.size > batchLimit) {
+            println("Warning: Too many texts (${texts.size}), processing only first $batchLimit")
         }
 
         return try {
-            val processedTexts = texts.take(2048).map { it.take(8000) }
+            // Обрезаем тексты и ограничиваем количество
+            val processedTexts = texts
+                .take(batchLimit)
+                .map { truncateText(it, model) }
 
             val response = client.post(apiUrl) {
-                setBody(mapOf(
-                    "model" to model,
-                    "input" to processedTexts,
-                    "encoding_format" to encodingFormat
+                setBody(EmbeddingBatchRequest(
+                    model = model,
+                    input = processedTexts,  // Используем правильный тип запроса
+                    encoding_format = encodingFormat
                 ))
             }
 
@@ -178,6 +179,71 @@ class EmbeddingService {
             println("Error creating batch embeddings: ${e.message}")
             e.printStackTrace()
             null
+        }
+    }
+
+    /**
+     * Создает embeddings для больших батчей, разбивая на части если нужно
+     */
+    suspend fun createEmbeddingsLargeBatch(
+        texts: List<String>,
+        batchSize: Int = 100,
+        model: String = embeddingModel
+    ): List<List<Float>> {
+        if (!isApiKeyValid()) {
+            println("Warning: OpenAI API key not configured")
+            return emptyList()
+        }
+
+        val allEmbeddings = mutableListOf<List<Float>>()
+
+        texts.chunked(batchSize).forEach { batch ->
+            val batchEmbeddings = createEmbeddings(batch, model)
+            if (batchEmbeddings != null) {
+                allEmbeddings.addAll(batchEmbeddings)
+            } else {
+                // Если батч не удался, пробуем по одному
+                println("Batch failed, processing individually")
+                batch.forEach { text ->
+                    val embedding = createEmbedding(text, model)
+                    if (embedding != null) {
+                        allEmbeddings.add(embedding)
+                    } else {
+                        // Добавляем пустой embedding чтобы сохранить индексы
+                        allEmbeddings.add(emptyList())
+                    }
+                }
+            }
+
+            // Небольшая задержка между батчами для избежания rate limiting
+            if (texts.size > batchSize) {
+                kotlinx.coroutines.delay(100)
+            }
+        }
+
+        return allEmbeddings
+    }
+
+    private fun isApiKeyValid(): Boolean {
+        return apiKey.isNotEmpty() &&
+                apiKey != "test_key" &&
+                !apiKey.startsWith("your_") &&
+                apiKey.startsWith("sk-")
+    }
+
+    private fun truncateText(text: String, model: String): String {
+        val maxChars = when (model) {
+            MODEL_ADA_002 -> 30000 // примерно ~8000 токенов
+            MODEL_3_SMALL -> 30000
+            MODEL_3_LARGE -> 30000
+            else -> 8000 // безопасное значение по умолчанию
+        }
+
+        return if (text.length > maxChars) {
+            println("Warning: Text truncated from ${text.length} to $maxChars chars")
+            text.take(maxChars)
+        } else {
+            text
         }
     }
 

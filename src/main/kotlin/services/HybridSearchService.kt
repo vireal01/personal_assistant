@@ -18,7 +18,7 @@ class HybridSearchService(
 
         val notes = if (queryEmbedding != null) {
             // 2. Векторный поиск
-            val vectorResults = vectorRepository.searchByVector(
+            val vectorResults = vectorRepository.searchByVectorWithFilters(
                 userId = userId,
                 queryEmbedding = queryEmbedding,
                 limit = limit,
