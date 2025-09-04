@@ -1,6 +1,8 @@
+version: '3.8'
+
 services:
   postgres:
-    image: pgvector/pgvector:pg15  # Образ с предустановленным pgvector
+    image: pgvector/pgvector:pg15
     container_name: knowledge_base_postgres
     environment:
       POSTGRES_DB: knowledge_base
@@ -16,25 +18,31 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
+  api:
     build:
       context: .
-      dockerfile: Dockerfile
-      # Docker Compose автоматически определит платформу
-    image: knowledge-base-app:latest
-    container_name: knowledge_base_app
+      dockerfile: ./api/Dockerfile
+    image: knowledge-base-api:latest
+    container_name: knowledge_base_api
     ports:
       - "8080:8080"
     env_file:
       - .env
-    environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/knowledge_base
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-test_key}
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: ./bot/Dockerfile
+    image: knowledge-base-bot:latest
+    container_name: knowledge_base_bot
+    env_file:
+      - .env
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:
