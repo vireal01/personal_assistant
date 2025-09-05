@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   api:
-    image: ghcr.io/yourusername/yourrepo-api:latest
+    image: ghcr.io/vireal01/personal_assistant-api:latest
     container_name: knowledge_base_api
     ports:
       - "127.0.0.1:8080:8080"
@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   bot:
-    image: ghcr.io/yourusername/yourrepo-bot:latest
+    image: ghcr.io/vireal01/personal_assistant-bot:latest
     container_name: knowledge_base_bot
     env_file:
       - .env
