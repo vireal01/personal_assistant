@@ -588,15 +588,7 @@ object CommandHandlers {
     ) {
         row {
             simpleButton("📝 Добавить заметку")
-            simpleButton("🔍 Поиск")
-        }
-        row {
             simpleButton("❓ Задать вопрос")
-            simpleButton("📚 Мои заметки")
-        }
-        row {
-            simpleButton("🏷 Теги")
-            simpleButton("📊 Статистика")
         }
     }
 }

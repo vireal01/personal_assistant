@@ -7,40 +7,43 @@ services:
     environment:
       POSTGRES_DB: knowledge_base
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - app-network
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
-    image: ghcr.io/yourusername/yourrepo-api:latest
+    build:
+      context: .
+      dockerfile: ./api/Dockerfile
+    image: knowledge-base-api:latest
     container_name: knowledge_base_api
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     env_file:
       - .env
     depends_on:
-      - postgres
-    networks:
-      - app-network
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   bot:
-    image: ghcr.io/yourusername/yourrepo-bot:latest
+    build:
+      context: .
+      dockerfile: ./bot/Dockerfile
+    image: knowledge-base-bot:latest
     container_name: knowledge_base_bot
     env_file:
       - .env
     depends_on:
       - api
-    networks:
-      - app-network
     restart: unless-stopped
-
-networks:
-  app-network:
-    driver: bridge
 
 volumes:
   postgres_data:
