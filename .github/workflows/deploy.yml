@@ -20,34 +20,41 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker images
-        run: |
-          # Build API
-          docker build -f api/Dockerfile -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-api:latest .
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-api:latest
-          
-          # Build Bot
-          docker build -f bot/Dockerfile -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-bot:latest .
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-bot:latest
+      - name: Build and push API
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./api/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository }}-api:latest
+
+      - name: Build and push Bot
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./bot/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository }}-bot:latest
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: prod
-
 
     steps:
       - name: Checkout code
@@ -59,8 +66,9 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "docker-compose.yml,.env.example"
-          target: "~/knowledge-base-bot"
+          source: "docker-compose.yml"
+          target: "/root/knowledge-base-bot"
+          strip_components: 1
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v0.1.5
@@ -70,17 +78,33 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             cd ~/knowledge-base-bot
-            
+
+            # Check if .env exists
+            if [ ! -f .env ]; then
+              echo "Error: .env file not found!"
+              exit 1
+            fi
+
             # Login to registry
             echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
+
             # Pull latest images
             docker pull ghcr.io/${{ github.repository }}-api:latest
             docker pull ghcr.io/${{ github.repository }}-bot:latest
-            
-            # Restart
-            docker-compose -f docker-compose.yml down
-            docker-compose -f docker-compose.yml up -d
-            
+
+            # Restart services
+            docker-compose down || true
+            docker-compose up -d
+
+            # Wait and check status
+            sleep 10
+            if ! docker ps | grep -q knowledge_base; then
+              echo "Deploy failed - containers not running"
+              docker-compose logs
+              exit 1
+            fi
+
             # Clean old images
             docker image prune -f
+
+            echo "Deploy successful!"
