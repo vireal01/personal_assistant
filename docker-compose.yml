@@ -4,12 +4,15 @@ services:
   postgres:
     image: pgvector/pgvector:pg15
     container_name: knowledge_base_postgres
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: knowledge_base
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - app-network
     restart: unless-stopped
