@@ -43,28 +43,28 @@ object MessageHandlers {
                     send(message.chat, "Отправьте текст заметки:")
                     userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
                 }
-
-                "🔍 Поиск" -> {
-                    send(message.chat, "Введите поисковый запрос:")
-                    userStates[userId] = UserState(waitingFor = WaitingState.SEARCH_QUERY)
-                }
+//
+//                "🔍 Поиск" -> {
+//                    send(message.chat, "Введите поисковый запрос:")
+//                    userStates[userId] = UserState(waitingFor = WaitingState.SEARCH_QUERY)
+//                }
 
                 "❓ Задать вопрос" -> {
                     send(message.chat, "Задайте ваш вопрос:")
                     userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
                 }
 
-                "📚 Мои заметки" -> {
-                    handleMyNotes(message, botService)
-                }
-
-                "🏷 Теги" -> {
-                    handleTags(message, botService)
-                }
-
-                "📊 Статистика" -> {
-                    handleStats(message, botService)
-                }
+//                "📚 Мои заметки" -> {
+//                    handleMyNotes(message, botService)
+//                }
+//
+//                "🏷 Теги" -> {
+//                    handleTags(message, botService)
+//                }
+//
+//                "📊 Статистика" -> {
+//                    handleStats(message, botService)
+//                }
 
                 else -> {
                     // Проверяем состояние пользователя
@@ -96,10 +96,9 @@ object MessageHandlers {
                                 replyMarkup = inlineKeyboard {
                                     row {
                                         dataButton("📝 Сохранить заметку", "save_note")
-                                        dataButton("🔍 Искать", "search_text")
+                                        dataButton("❓ Задать вопрос", "ask_question")
                                     }
                                     row {
-                                        dataButton("❓ Задать вопрос", "ask_question")
                                         dataButton("❌ Отмена", "cancel")
                                     }
                                 }
@@ -126,7 +125,7 @@ object MessageHandlers {
                 editMessageText(
                     message.chat,
                     tempMsg.messageId,
-                    "✅ Заметка сохранена!\nID: ${response.noteId}"
+                    "✅ Заметка сохранена!"
                 )
             } else {
                 editMessageText(

@@ -17,11 +17,11 @@ class QueryService(
     private val tagService: TagExtractionService = TagExtractionService()
 ) {
     companion object {
-        private const val MAX_CONTEXT_TOKENS = 2000
+        private const val MAX_CONTEXT_TOKENS = 3500
         private const val MIN_KEYWORD_LENGTH = 2
-        private const val RERANKING_CANDIDATES = 50
-        private const val FINAL_RESULTS = 5
-        private const val FALLBACK_RESULTS = 10
+        private const val RERANKING_CANDIDATES = 100
+        private const val FINAL_RESULTS = 10
+        private const val FALLBACK_RESULTS = 20
     }
 
     suspend fun processQuery(userId: Long, question: String): QueryResponse {

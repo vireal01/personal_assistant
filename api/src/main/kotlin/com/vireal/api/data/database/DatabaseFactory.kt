@@ -18,15 +18,18 @@ object DatabaseFactory {
         systemProperties = true
     }
 
+    // Конфигурация для векторного поиска
+    private const val VECTOR_DIMENSION = 1536  // Для OpenAI text-embedding-3-small
+    private const val HNSW_M = 16              // Параметр M для HNSW индекса
+    private const val HNSW_EF_CONSTRUCTION = 64 // Параметр ef_construction
+
     fun init(config: ApplicationConfig) {
-        // Получаем настройки БД из .env или системных переменных
         val driverClassName = "org.postgresql.Driver"
         val jdbcURL = dotenv["DATABASE_URL"]
             ?: "jdbc:postgresql://localhost:5432/knowledge_base"
         val user = dotenv["DB_USER"] ?: "postgres"
         val password = dotenv["DB_PASSWORD"] ?: "postgres"
 
-        // Опциональные настройки пула соединений
         val maxPoolSize = dotenv["DB_MAX_POOL_SIZE"]?.toIntOrNull() ?: 10
         val connectionTimeout = dotenv["DB_CONNECTION_TIMEOUT"]?.toLongOrNull() ?: 30000L
 
@@ -43,170 +46,244 @@ object DatabaseFactory {
 
         transaction(database) {
             // Создаем таблицы если их нет
-            SchemaUtils.create(Notes, SchemaMigrations)
+            SchemaUtils.create(Notes, SchemaMigrations, NoteSearchCache)
 
-            // Применяем миграции после создания базовой структуры
-            applyMigrations()
+            // Применяем миграции
+            applyScalableMigrations()
         }
     }
 
-    private fun applyMigrations() {
-        // Получаем примененные миграции
+    private fun applyScalableMigrations() {
         val appliedMigrations = SchemaMigrations
             .selectAll()
             .map { it[SchemaMigrations.version] }
             .toSet()
 
-        // Миграция 1: Изменение типов колонок для PostgreSQL специфичных типов
-        if (!appliedMigrations.contains(1)) {
-            println("Applying migration 1: PostgreSQL specific column types...")
+        // Миграция 4: Полная поддержка pgvector для масштабирования
+        if (!appliedMigrations.contains(4)) {
+            println("Applying migration 4: Full pgvector support for scalability...")
 
             try {
                 val connection = TransactionManager.current().connection.connection as Connection
 
-                // Изменяем тип колонки tags на TEXT[] если нужно
                 connection.createStatement().use { statement ->
-                    // Проверяем текущий тип колонки
+                    // 1. Включаем расширение pgvector
+                    statement.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                    println("✓ pgvector extension enabled")
+
+                    // 2. Проверяем текущий тип колонки embedding
                     val checkSql = """
-                        SELECT data_type 
+                        SELECT data_type, udt_name
                         FROM information_schema.columns 
-                        WHERE table_name = 'notes' AND column_name = 'tags'
+                        WHERE table_name = 'notes' AND column_name = 'embedding'
                     """.trimIndent()
 
                     val rs = statement.executeQuery(checkSql)
                     if (rs.next()) {
                         val currentType = rs.getString("data_type")
-                        if (currentType == "text") {
-                            println("Column 'tags' is TEXT, keeping as is for JSON storage")
-                        } else if (currentType != "ARRAY") {
-                            // Если это не массив и не текст, конвертируем в текст
-                            statement.execute("ALTER TABLE notes ALTER COLUMN tags TYPE TEXT USING tags::TEXT")
-                        }
-                    }
+                        val udtName = rs.getString("udt_name")
 
-                    // Аналогично для metadata
-                    val checkMetaSql = """
-                        SELECT data_type 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'notes' AND column_name = 'metadata'
-                    """.trimIndent()
+                        if (currentType != "USER-DEFINED" || udtName != "vector") {
+                            println("Converting embedding column from $currentType to vector($VECTOR_DIMENSION)...")
 
-                    val rsMeta = statement.executeQuery(checkMetaSql)
-                    if (rsMeta.next()) {
-                        val currentType = rsMeta.getString("data_type")
-                        if (currentType == "text") {
-                            println("Column 'metadata' is TEXT, keeping as is for JSON storage")
-                        } else if (currentType == "jsonb") {
-                            // Если это JSONB, можем оставить как есть или конвертировать в TEXT
-                            println("Column 'metadata' is JSONB, keeping as is")
-                        }
-                    }
-                }
+                            // 3. Создаем временную колонку для векторов
+                            statement.execute("""
+                                ALTER TABLE notes 
+                                ADD COLUMN IF NOT EXISTS embedding_vector vector($VECTOR_DIMENSION)
+                            """)
 
-                // Создаем индексы для оптимизации
-                connection.createStatement().use { statement ->
-                    // Индекс для user_id и category
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_user_category ON notes(user_id, category)")
-
-                    // Индекс для user_id и created_at
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id, created_at DESC)")
-
-                    // GIN индекс для полнотекстового поиска по content
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_content_gin ON notes USING gin(to_tsvector('english', content))")
-                }
-
-                SchemaMigrations.insert {
-                    it[version] = 1
-                    it[appliedAt] = Instant.now()
-                }
-                println("Migration 1 applied successfully")
-            } catch (e: Exception) {
-                println("Error applying migration 1: ${e.message}")
-            }
-        }
-
-        // Миграция 2: Добавление поддержки pgvector для embeddings
-        if (!appliedMigrations.contains(2)) {
-            println("Applying migration 2: pgvector support...")
-
-            try {
-                val connection = TransactionManager.current().connection.connection as Connection
-
-                connection.createStatement().use { statement ->
-                    // Проверяем, установлен ли pgvector
-                    try {
-                        statement.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                        println("pgvector extension enabled")
-
-                        // Проверяем тип колонки embedding
-                        val checkSql = """
-                            SELECT data_type 
-                            FROM information_schema.columns 
-                            WHERE table_name = 'notes' AND column_name = 'embedding'
-                        """.trimIndent()
-
-                        val rs = statement.executeQuery(checkSql)
-                        if (rs.next()) {
-                            val currentType = rs.getString("data_type")
+                            // 4. Мигрируем существующие embeddings (если они в JSON формате)
                             if (currentType == "text") {
-                                println("Column 'embedding' is TEXT, will be used for JSON array storage")
-                                // Оставляем как TEXT для хранения JSON массива
-                            } else if (currentType == "USER-DEFINED") {
-                                // Вероятно это уже vector тип
-                                println("Column 'embedding' seems to be vector type already")
-
-                                // Создаем HNSW индекс если его нет
+                                println("Migrating existing text embeddings to vector format...")
                                 statement.execute("""
-                                    CREATE INDEX IF NOT EXISTS idx_notes_embedding_hnsw 
-                                    ON notes USING hnsw (embedding::vector vector_cosine_ops)
-                                    WITH (m = 16, ef_construction = 64)
+                                    UPDATE notes 
+                                    SET embedding_vector = embedding::vector
+                                    WHERE embedding IS NOT NULL 
+                                    AND embedding != '[]'
+                                    AND embedding LIKE '[%'
                                 """)
                             }
+
+                            // 5. Удаляем старую колонку и переименовываем новую
+                            statement.execute("ALTER TABLE notes DROP COLUMN IF EXISTS embedding")
+                            statement.execute("ALTER TABLE notes RENAME COLUMN embedding_vector TO embedding")
+
+                            println("✓ Embedding column converted to vector type")
+                        } else {
+                            println("✓ Embedding column is already vector type")
                         }
-                    } catch (e: Exception) {
-                        println("pgvector not available, embedding will be stored as TEXT: ${e.message}")
+                    } else {
+                        // Колонки нет, создаем сразу правильного типа
+                        statement.execute("""
+                            ALTER TABLE notes 
+                            ADD COLUMN embedding vector($VECTOR_DIMENSION)
+                        """)
+                        println("✓ Created embedding column with vector type")
                     }
+
+                    // 6. Создаем HNSW индекс для быстрого поиска
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_notes_embedding_hnsw 
+                        ON notes USING hnsw (embedding vector_cosine_ops)
+                        WITH (m = $HNSW_M, ef_construction = $HNSW_EF_CONSTRUCTION)
+                    """)
+                    println("✓ HNSW index created for fast vector search")
+
+                    // 7. Создаем составной индекс для фильтрации
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_notes_user_embedding 
+                        ON notes(user_id) 
+                        WHERE embedding IS NOT NULL
+                    """)
+                    println("✓ Composite index for user filtering created")
+
+                    // 8. Создаем индексы для текстового поиска
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_notes_content_trgm 
+                        ON notes USING gin (content gin_trgm_ops)
+                    """)
+                    println("✓ Trigram index for text search created")
+
+                    // 9. Оптимизация для категорий и тегов
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_notes_user_category_created 
+                        ON notes(user_id, category, created_at DESC)
+                    """)
+
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_notes_tags_gin 
+                        ON notes USING gin (tags)
+                    """)
+                    println("✓ Indexes for categories and tags created")
                 }
 
                 SchemaMigrations.insert {
-                    it[version] = 2
+                    it[version] = 4
                     it[appliedAt] = Instant.now()
                 }
-                println("Migration 2 applied successfully")
+                println("✓ Migration 4 applied successfully")
+
             } catch (e: Exception) {
-                println("Error applying migration 2: ${e.message}")
+                println("Error applying migration 4: ${e.message}")
+                e.printStackTrace()
             }
         }
 
-        // Миграция 3: Добавление дополнительных индексов для производительности
-        if (!appliedMigrations.contains(3)) {
-            println("Applying migration 3: Performance indexes...")
+        // Миграция 5: Оптимизация производительности для больших объемов
+        if (!appliedMigrations.contains(5)) {
+            println("Applying migration 5: Performance optimizations...")
 
             try {
                 val connection = TransactionManager.current().connection.connection as Connection
 
                 connection.createStatement().use { statement ->
-                    // Составной индекс для фильтрации по user_id и поиску в tags
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_user_tags ON notes(user_id, tags)")
+                    // 1. Включаем расширение для триграммного поиска
+                    statement.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                    println("✓ pg_trgm extension enabled")
 
-                    // Частичный индекс для заметок с embedding
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_with_embedding ON notes(user_id) WHERE embedding IS NOT NULL")
+                    // 2. Создаем партиционирование для очень больших объемов (опционально)
+                    // Это пример, активируйте при необходимости
+                    /*
+                    statement.execute("""
+                        -- Создаем партиционированную таблицу
+                        CREATE TABLE IF NOT EXISTS notes_partitioned (
+                            LIKE notes INCLUDING ALL
+                        ) PARTITION BY HASH (user_id)
+                    """)
 
-                    // Индекс для сортировки по created_at
-                    statement.execute("CREATE INDEX IF NOT EXISTS idx_notes_created_desc ON notes(created_at DESC)")
+                    // Создаем 10 партиций
+                    for (i in 0..9) {
+                        statement.execute("""
+                            CREATE TABLE IF NOT EXISTS notes_part_$i
+                            PARTITION OF notes_partitioned
+                            FOR VALUES WITH (modulus 10, remainder $i)
+                        """)
+                    }
+                    */
+
+                    // 3. Настройка параметров для векторного поиска
+                    statement.execute("""
+                        -- Увеличиваем лимит для hnsw.ef_search для лучшей точности
+                        ALTER DATABASE ${connection.catalog} 
+                        SET hnsw.ef_search = 100
+                    """)
+                    println("✓ Vector search parameters optimized")
+
+                    // 4. Создаем функцию для batch-обработки embeddings
+                    statement.execute("""
+                        CREATE OR REPLACE FUNCTION process_embeddings_batch(
+                            batch_size INT DEFAULT 100
+                        ) RETURNS INT AS $$
+                        DECLARE
+                            processed_count INT := 0;
+                        BEGIN
+                            -- Функция для batch обработки в БД
+                            -- Реализация зависит от ваших потребностей
+                            RETURN processed_count;
+                        END;
+                        $$ LANGUAGE plpgsql;
+                    """)
+                    println("✓ Batch processing function created")
+
+                    // 5. Анализируем таблицу для оптимизатора
+                    statement.execute("ANALYZE notes")
+                    println("✓ Table statistics updated")
                 }
 
                 SchemaMigrations.insert {
-                    it[version] = 3
+                    it[version] = 5
                     it[appliedAt] = Instant.now()
                 }
-                println("Migration 3 applied successfully")
+                println("✓ Migration 5 applied successfully")
+
             } catch (e: Exception) {
-                println("Error applying migration 3: ${e.message}")
+                println("Error applying migration 5: ${e.message}")
+                // Некритичная ошибка, продолжаем
             }
         }
 
-        println("All migrations processed")
+        // Миграция 6: Добавление кэш-таблицы для частых запросов
+        if (!appliedMigrations.contains(6)) {
+            println("Applying migration 6: Cache table for frequent queries...")
+
+            try {
+                val connection = TransactionManager.current().connection.connection as Connection
+
+                connection.createStatement().use { statement ->
+                    // Материализованное представление для топ похожих заметок
+                    statement.execute("""
+                        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_similar_notes AS
+                        SELECT 
+                            n1.id as note_id,
+                            n2.id as similar_note_id,
+                            1 - (n1.embedding <=> n2.embedding) as similarity
+                        FROM notes n1
+                        JOIN notes n2 ON n1.user_id = n2.user_id AND n1.id != n2.id
+                        WHERE n1.embedding IS NOT NULL AND n2.embedding IS NOT NULL
+                        AND 1 - (n1.embedding <=> n2.embedding) > 0.7
+                    """)
+
+                    statement.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_mv_similar_notes 
+                        ON mv_similar_notes(note_id, similarity DESC)
+                    """)
+
+                    println("✓ Materialized view for similar notes created")
+                }
+
+                SchemaMigrations.insert {
+                    it[version] = 6
+                    it[appliedAt] = Instant.now()
+                }
+                println("✓ Migration 6 applied successfully")
+
+            } catch (e: Exception) {
+                println("Warning: Could not create materialized view: ${e.message}")
+                // Не критично, продолжаем
+            }
+        }
+
+        println("All migrations processed successfully")
     }
 
     private fun createHikariDataSource(
@@ -225,6 +302,12 @@ object DatabaseFactory {
         this.connectionTimeout = connectionTimeout
         isAutoCommit = false
         transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+
+        // Оптимизации для работы с векторами
+        addDataSourceProperty("prepStmtCacheSize", "250")
+        addDataSourceProperty("prepStmtCacheSqlLimit", "2048")
+        addDataSourceProperty("cachePrepStmts", "true")
+        addDataSourceProperty("useServerPrepStmts", "true")
 
         dotenv["DB_LEAK_DETECTION_THRESHOLD"]?.toLongOrNull()?.let {
             leakDetectionThreshold = it
