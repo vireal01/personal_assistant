@@ -1,6 +1,8 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
+import dev.inmo.kslog.common.error
+import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
@@ -10,10 +12,14 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.utils.row
-import org.slf4j.LoggerFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 object MessageHandlers {
-  private val logger = LoggerFactory.getLogger(this::class.java)
   private val userStates = mutableMapOf<Long, UserState>()
 
   data class UserState(
@@ -27,12 +33,42 @@ object MessageHandlers {
     QUESTION
   }
 
+  private data class ForwardBatch(
+    val messages: MutableList<CommonMessage<TextContent>>
+  )
+
+  private val forwardBatches = ConcurrentHashMap<Long, ForwardBatch>()
+  private val batchTimers = ConcurrentHashMap<Long, Job>()
+  private const val FORWARD_BATCH_DELAY = 1000L // 1 секунда
+
   suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
 
     // Обработка обычных текстовых сообщений
     onText { message ->
       val userId = message.chat.id.chatId
       val text = message.content.text
+
+
+      // Обработка пересланных сообщений
+      if (message.forwardInfo != null) {
+        // Отменяем предыдущий таймер для этого пользователя, если он есть
+        batchTimers[userId]?.cancel()
+
+        // Добавляем сообщение в пачку
+        val batch = forwardBatches.getOrPut(userId) { ForwardBatch(mutableListOf()) }
+        batch.messages.add(message)
+
+        // Запускаем новый таймер
+        batchTimers[userId] = CoroutineScope(Dispatchers.Default).launch {
+          delay(FORWARD_BATCH_DELAY)
+          // Забираем пачку и удаляем ее из хранилища
+          forwardBatches.remove(userId)?.let {
+            processForwardBatch(userId, it.messages, botService)
+          }
+          batchTimers.remove(userId)
+        }
+        return@onText
+      }
 
       // Игнорируем команды
       if (text.startsWith("/")) return@onText
@@ -43,28 +79,28 @@ object MessageHandlers {
           send(message.chat, "Отправьте текст заметки:")
           userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
         }
-//
-//                "🔍 Поиск" -> {
-//                    send(message.chat, "Введите поисковый запрос:")
-//                    userStates[userId] = UserState(waitingFor = WaitingState.SEARCH_QUERY)
-//                }
+
+//        "🔍 Поиск" -> {
+//          send(message.chat, "Введите поисковый запрос:")
+//          userStates[userId] = UserState(waitingFor = WaitingState.SEARCH_QUERY)
+//        }
 
         "❓ Задать вопрос" -> {
           send(message.chat, "Задайте ваш вопрос:")
           userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
         }
 
-//                "📚 Мои заметки" -> {
-//                    handleMyNotes(message, botService)
-//                }
+//        "📚 Мои заметки" -> {
+//          handleMyNotes(message, botService)
+//        }
 //
-//                "🏷 Теги" -> {
-//                    handleTags(message, botService)
-//                }
+//        "🏷 Теги" -> {
+//          handleTags(message, botService)
+//        }
 //
-//                "📊 Статистика" -> {
-//                    handleStats(message, botService)
-//                }
+//        "📊 Статистика" -> {
+//          handleStats(message, botService)
+//        }
 
         else -> {
           // Проверяем состояние пользователя
@@ -274,4 +310,31 @@ object MessageHandlers {
 
   fun getUserState(userId: Long): UserState? = userStates[userId]
   fun removeUserState(userId: Long) = userStates.remove(userId)
+}
+
+
+private suspend fun BehaviourContext.processForwardBatch(
+  userId: Long,
+  messages: List<CommonMessage<TextContent>>,
+  botService: BotService
+) {
+  if (messages.isEmpty()) return
+  val firstMessage = messages.first()
+  val chat = firstMessage.chat
+
+  try {
+    val mergedText = messages.joinToString("\n\n") { it.content.text }
+    val tempMsg = send(chat, "📥 Получена пачка из ${messages.size} сообщений. Сохраняю как одну заметку...")
+
+    val response = botService.createNote(userId, mergedText)
+
+    if (response.success) {
+      editMessageText(chat, tempMsg.messageId, "✅ Пачка из ${messages.size} сообщений сохранена как одна заметка.")
+    } else {
+      editMessageText(chat, tempMsg.messageId, "❌ Ошибка сохранения пачки сообщений: ${response.message}")
+    }
+  } catch (e: Exception) {
+    MessageHandlers.logger.error("Error processing forward batch for user $userId", e)
+    send(chat, "❌ Произошла ошибка при обработке пересланных сообщений.")
+  }
 }
