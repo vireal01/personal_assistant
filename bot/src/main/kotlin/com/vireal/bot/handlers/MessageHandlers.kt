@@ -1,12 +1,17 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
+import dev.inmo.kslog.common.d
 import dev.inmo.kslog.common.error
 import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onText
+import dev.inmo.tgbotapi.extensions.utils.ifFromChannel
+import dev.inmo.tgbotapi.extensions.utils.ifFromSupergroup
+import dev.inmo.tgbotapi.extensions.utils.mediaContentOrNull
+import dev.inmo.tgbotapi.extensions.utils.mediaGroupContentOrNull
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
@@ -45,10 +50,23 @@ object MessageHandlers {
     // Обработка обычных текстовых сообщений
     onText { message ->
       val userId = message.chat.id.chatId
+      logger.d(message.content)
+      logger.d("Received text message from user $userId: ${message.content.text}")
+      logger.d("is mediaGroupContent: ${message.content.mediaGroupContentOrNull().toString()}")
+      logger.d("is mediaContent: ${message.content.mediaContentOrNull().toString()}")
       val text = message.content.text
 
       // Обработка пересланных сообщений
       if (message.forwardInfo != null) {
+
+        message.forwardInfo?.ifFromChannel {
+          logger.d("https://t.me/${it.channelChat.id}/${it.messageId}")
+        }
+
+        message.forwardInfo?.ifFromSupergroup {
+          logger.d("https://t.me/${it.group.id}/")
+        }
+
         batchTimers[userId]?.cancel()
 
         val batch = forwardBatches.getOrPut(userId) { ForwardBatch(mutableListOf()) }
