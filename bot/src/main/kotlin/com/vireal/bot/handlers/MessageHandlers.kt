@@ -50,21 +50,21 @@ object MessageHandlers {
     // Обработка обычных текстовых сообщений
     onText { message ->
       val userId = message.chat.id.chatId
-      logger.d(message.content)
-      logger.d("Received text message from user $userId: ${message.content.text}")
-      logger.d("is mediaGroupContent: ${message.content.mediaGroupContentOrNull().toString()}")
-      logger.d("is mediaContent: ${message.content.mediaContentOrNull().toString()}")
+      println(message.content)
+      println("Received text message from user $userId: ${message.content.text}")
+      println("is mediaGroupContent: ${message.content.mediaGroupContentOrNull().toString()}")
+      println("is mediaContent: ${message.content.mediaContentOrNull().toString()}")
       val text = message.content.text
 
       // Обработка пересланных сообщений
       if (message.forwardInfo != null) {
 
         message.forwardInfo?.ifFromChannel {
-          logger.d("https://t.me/${it.channelChat.id}/${it.messageId}")
+          println("https://t.me/${it.channelChat.id}/${it.messageId}")
         }
 
         message.forwardInfo?.ifFromSupergroup {
-          logger.d("https://t.me/${it.group.id}/")
+          println("https://t.me/${it.group.id}/")
         }
 
         batchTimers[userId]?.cancel()
