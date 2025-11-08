@@ -9,6 +9,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onText
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
+import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.utils.row
@@ -46,7 +47,6 @@ object MessageHandlers {
       val userId = message.chat.id.chatId
       val text = message.content.text
 
-
       // Обработка пересланных сообщений
       if (message.forwardInfo != null) {
         batchTimers[userId]?.cancel()
@@ -57,7 +57,7 @@ object MessageHandlers {
         batchTimers[userId] = launch {
           delay(FORWARD_BATCH_DELAY)
           forwardBatches.remove(userId)?.let {
-            processForwardBatch(userId, it.messages, botService)
+            processForwardBatch(userId, it.messages)
           }
           batchTimers.remove(userId)
         }
@@ -123,15 +123,7 @@ object MessageHandlers {
               send(
                 message.chat,
                 "Что сделать с этим текстом?",
-                replyMarkup = inlineKeyboard {
-                  row {
-                    dataButton("📝 Сохранить заметку", "save_note")
-                    dataButton("❓ Задать вопрос", "ask_question")
-                  }
-                  row {
-                    dataButton("❌ Отмена", "cancel")
-                  }
-                }
+                replyMarkup = createActionKeyboard()
               )
             }
           }
@@ -304,13 +296,24 @@ object MessageHandlers {
 
   fun getUserState(userId: Long): UserState? = userStates[userId]
   fun removeUserState(userId: Long) = userStates.remove(userId)
+  fun setUserState(userId: Long, state: UserState) {
+    userStates[userId] = state
+  }
 }
 
+private fun createActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
+  row {
+    dataButton("📝 Сохранить заметку", "save_note")
+    dataButton("❓ Задать вопрос", "ask_question")
+  }
+  row {
+    dataButton("❌ Отмена", "cancel")
+  }
+}
 
 private suspend fun BehaviourContext.processForwardBatch(
   userId: Long,
-  messages: List<CommonMessage<TextContent>>,
-  botService: BotService
+  messages: List<CommonMessage<TextContent>>
 ) {
   if (messages.isEmpty()) return
   val firstMessage = messages.first()
@@ -318,15 +321,19 @@ private suspend fun BehaviourContext.processForwardBatch(
 
   try {
     val mergedText = messages.joinToString("\n\n") { it.content.text }
-    val tempMsg = send(chat, "📥 Получена пачка из ${messages.size} сообщений. Сохраняю как одну заметку...")
+    MessageHandlers.setUserState(userId, MessageHandlers.UserState(lastMessage = mergedText))
 
-    val response = botService.createNote(userId, mergedText)
-
-    if (response.success) {
-      editMessageText(chat, tempMsg.messageId, "✅ Пачка из ${messages.size} сообщений сохранена как одна заметка.")
+    val messageText = if (messages.size == 1) {
+      "Что сделать с пересланным сообщением?"
     } else {
-      editMessageText(chat, tempMsg.messageId, "❌ Ошибка сохранения пачки сообщений: ${response.message}")
+      "Получена пачка из ${messages.size} сообщений. Что с ней сделать?"
     }
+
+    send(
+      chat,
+      messageText,
+      replyMarkup = createActionKeyboard()
+    )
   } catch (e: Exception) {
     logger.error("Error processing forward batch for user $userId", e)
     send(chat, "❌ Произошла ошибка при обработке пересланных сообщений.")
