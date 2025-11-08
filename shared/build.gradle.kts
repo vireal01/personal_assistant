@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm")
-    kotlin("plugin.serialization")
+  kotlin("jvm")
+  kotlin("plugin.serialization")
 }
 
 group = "com.vireal"
@@ -10,13 +10,13 @@ val kotlinx_serialization_version: String by project
 
 
 repositories {
-    mavenCentral()
+  mavenCentral()
 }
 
 kotlin {
-    jvmToolchain(17)
+  jvmToolchain(17)
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinx_serialization_version")
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinx_serialization_version")
 }

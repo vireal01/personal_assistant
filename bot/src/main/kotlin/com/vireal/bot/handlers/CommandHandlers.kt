@@ -1,5 +1,6 @@
-package com.vireal.bot
+package com.vireal.bot.handlers
 
+import com.vireal.bot.utils.escapeMarkdownV2
 import com.vireal.bot.service.BotService
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
@@ -19,570 +20,570 @@ import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 
 object CommandHandlers {
-    private val logger = LoggerFactory.getLogger(this::class.java)
+  private val logger = LoggerFactory.getLogger(this::class.java)
 
-    suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
+  suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
 
-        // Команда /start
-        onCommand("start") { message ->
-            val userId = message.chat.id.chatId
-            val welcomeMessage = """
+    // Команда /start
+    onCommand("start") { message ->
+      val userId = message.chat.id.chatId
+      val welcomeMessage = """
                 🎉 *Добро пожаловать в Knowledge Base Bot\!*
-                
+
                 Я помогу вам управлять персональной базой знаний с векторным поиском\.
-                
+
                 *Основные команды:*
                 📝 /add \- Добавить заметку
                 ❓ /ask \- Задать вопрос по базе
-                
+
                 Или просто отправьте текст для добавления заметки\!
             """.trimIndent()
 
-            send(
-                message.chat,
-                welcomeMessage,
-                parseMode = MarkdownV2,
-                replyMarkup = getMainKeyboard()
-            )
-        }
+      send(
+        message.chat,
+        welcomeMessage,
+        parseMode = MarkdownV2,
+        replyMarkup = getMainKeyboard()
+      )
+    }
 
-        // Команда /help
-        onCommand("help") { message ->
-            val helpMessage = """
+    // Команда /help
+    onCommand("help") { message ->
+      val helpMessage = """
                 📖 *Подробная справка*
-                
+
                 *Добавление заметок:*
                 • `/add \[текст\]` \- Добавить с автотегами
                 • Просто отправьте текст
-                
+
                 *Поиск и вопросы:*
                 • `/search \[запрос\]` \- Векторный поиск
                 • `/ask \[вопрос\]` \- Получить ответ из базы
                 • `/similar \[id\]` \- Похожие заметки
-                
+
                 *Организация:*
                 • `/tags` \- Все ваши теги
                 • `/category \[название\]` \- По категории
                 • `/mynotes \[число\]` \- Последние N заметок
-                
+
                 *Управление:*
                 • `/delete \[id\]` \- Удалить заметку
                 • `/stats` \- Статистика базы
                 • `/export` \- Экспорт заметок
                 • `/process` \- Обработать embeddings
-                
+
                 💡 *Совет:* Используйте \#хештеги для категоризации\!
             """.trimIndent()
 
-            send(message.chat, helpMessage, parseMode = MarkdownV2)
-        }
+      send(message.chat, helpMessage, parseMode = MarkdownV2)
+    }
 
-        // Команда /add
-        onCommand("add") { message ->
-            val userId = message.chat.id.chatId
-            val text = message.content.text.substringAfter("/add").trim()
+    // Команда /add
+    onCommand("add") { message ->
+      val userId = message.chat.id.chatId
+      val text = message.content.text.substringAfter("/add").trim()
 
-            if (text.isEmpty()) {
-                send(message.chat, "Пожалуйста, укажите текст заметки после команды /add")
-                return@onCommand
-            }
+      if (text.isEmpty()) {
+        send(message.chat, "Пожалуйста, укажите текст заметки после команды /add")
+        return@onCommand
+      }
 
-            val tempMsg = send(message.chat, "⏳ Сохраняю заметку...")
+      val tempMsg = send(message.chat, "⏳ Сохраняю заметку...")
 
-            try {
-                val response = botService.createNote(userId, text)
+      try {
+        val response = botService.createNote(userId, text)
 
-                if (response.success) {
-                    val successMsg = """
+        if (response.success) {
+          val successMsg = """
                         ✅ Заметка сохранена!
                         📝 ID: `${response.noteId}`
-                        
+
                         Используйте /search для поиска или /ask для вопросов
                     """.trimIndent()
 
-                    editMessageText(
-                        message.chat,
-                        tempMsg.messageId,
-                        successMsg,
-                        parseMode = MarkdownV2,
-                        replyMarkup = inlineKeyboard {
-                            row {
-                                dataButton("🔍 Найти похожие", "similar:${response.noteId}")
-                            }
-                        }
-                    )
-                } else {
-                    editMessageText(
-                        message.chat,
-                        tempMsg.messageId,
-                        "❌ Ошибка: ${response.message}"
-                    )
-                }
-            } catch (e: Exception) {
-                logger.error("Error adding note", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Произошла ошибка при сохранении"
-                )
+          editMessageText(
+            message.chat,
+            tempMsg.messageId,
+            successMsg,
+            parseMode = MarkdownV2,
+            replyMarkup = inlineKeyboard {
+              row {
+                dataButton("🔍 Найти похожие", "similar:${response.noteId}")
+              }
             }
+          )
+        } else {
+          editMessageText(
+            message.chat,
+            tempMsg.messageId,
+            "❌ Ошибка: ${response.message}"
+          )
         }
-
-        // Команда /search
-        onCommand("search") { message ->
-            val userId = message.chat.id.chatId
-            val query = message.content.text.substringAfter("/search").trim()
-
-            if (query.isEmpty()) {
-                send(message.chat, "Укажите поисковый запрос после /search")
-                return@onCommand
-            }
-
-            val tempMsg = send(message.chat, "🔍 Ищу...")
-
-            try {
-                val results = botService.searchNotes(userId, query)
-
-                if (results.notes.isEmpty()) {
-                    editMessageText(
-                        message.chat,
-                        tempMsg.messageId,
-                        "Не найдено заметок по запросу: *$query*",
-                        parseMode = MarkdownV2
-                    )
-                    return@onCommand
-                }
-
-                val resultText = buildString {
-                    appendLine("*Найдено ${results.totalFound} заметок:*")
-                    appendLine()
-
-                    results.notes.take(5).forEachIndexed { index, note ->
-                        appendLine("${index + 1}\\. ${note.content.take(100).escapeMarkdownV2()}")
-                        if (note.tags.isNotEmpty()) {
-                            appendLine("   🏷 ${note.tags.joinToString(", ") { it.escapeMarkdownV2() }}")
-                        }
-                        appendLine("   🆔 `${note.id}`")
-                        appendLine()
-                    }
-                }.trimIndent()
-
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    resultText,
-                    parseMode = MarkdownV2
-                )
-            } catch (e: Exception) {
-                logger.error("Error searching", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Ошибка при поиске"
-                )
-            }
-        }
-
-        // Команда /ask
-        onCommand("ask") { message ->
-            val userId = message.chat.id.chatId
-            val question = message.content.text.substringAfter("/ask").trim()
-
-            if (question.isEmpty()) {
-                send(message.chat, "Задайте вопрос после команды /ask")
-                return@onCommand
-            }
-
-            val tempMsg = send(message.chat, "🤔 Анализирую базу знаний...")
-
-            try {
-                val response = botService.askQuestion(userId, question)
-
-                val answerText = buildString {
-                    appendLine("*Вопрос:* ${question.escapeMarkdownV2()}")
-                    appendLine()
-                    appendLine("*Ответ:*")
-                    appendLine(response.answer.escapeMarkdownV2())
-
-                    if (response.sources.isNotEmpty()) {
-                        appendLine()
-                        appendLine("*Источники:*")
-                        response.sources.forEach { source ->
-                            appendLine("• ${source.escapeMarkdownV2()}")
-                        }
-                    }
-                }.trimIndent()
-
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    answerText,
-                    parseMode = MarkdownV2
-                )
-            } catch (e: Exception) {
-                logger.error("Error processing question", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Ошибка обработки вопроса"
-                )
-            }
-        }
-
-        // Команда /mynotes
-        onCommand("mynotes") { message ->
-            val userId = message.chat.id.chatId
-            val limitStr = message.content.text.substringAfter("/mynotes").trim()
-            val limit = limitStr.toIntOrNull() ?: 5
-
-            try {
-                val notes = botService.getUserNotes(userId, limit)
-
-                if (notes.isEmpty()) {
-                    send(message.chat, "У вас пока нет заметок. Используйте /add для добавления.")
-                    return@onCommand
-                }
-
-                val notesText = buildString {
-                    appendLine("*📚 Ваши последние $limit заметок:*")
-                    appendLine()
-
-                    notes.forEachIndexed { index, note ->
-                        appendLine("${index + 1}\\. ${note.content.take(150).escapeMarkdownV2()}")
-                        appendLine("   📅 ${note.createdAt.take(10)}")
-                        appendLine("   🆔 `${note.id}`")
-                        appendLine()
-                    }
-                }.trimIndent()
-
-                send(
-                    message.chat,
-                    notesText,
-                    parseMode = MarkdownV2,
-                    replyMarkup = inlineKeyboard {
-                        row {
-                            dataButton("📥 Показать еще", "more:${limit + 5}")
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                logger.error("Error getting notes", e)
-                send(message.chat, "❌ Ошибка получения заметок")
-            }
-        }
-
-        // Команда /tags
-        onCommand("tags") { message ->
-            val userId = message.chat.id.chatId
-
-            try {
-                val tags = botService.getUserTags(userId)
-
-                if (tags.isEmpty()) {
-                    send(message.chat, "У вас пока нет тегов")
-                    return@onCommand
-                }
-
-                val tagsText = buildString {
-                    appendLine("*🏷 Ваши теги:*")
-                    appendLine()
-                    tags.forEach { tag ->
-                        appendLine("#${tag.escapeMarkdownV2()}")
-                    }
-                }.trimIndent()
-
-                val keyboard = inlineKeyboard {
-                    tags.chunked(3).forEach { row ->
-                        row {
-                            row.forEach { tag ->
-                                dataButton("#$tag", "tag:$tag")
-                            }
-                        }
-                    }
-                }
-
-                send(
-                    message.chat,
-                    tagsText,
-                    parseMode = MarkdownV2,
-                    replyMarkup = keyboard
-                )
-            } catch (e: Exception) {
-                logger.error("Error getting tags", e)
-                send(message.chat, "❌ Ошибка получения тегов")
-            }
-        }
-
-        // Команда /category
-        onCommand("category") { message ->
-            val userId = message.chat.id.chatId
-            val category = message.content.text.substringAfter("/category").trim()
-
-            try {
-                if (category.isEmpty()) {
-                    val stats = botService.getCategoryStats(userId)
-
-                    if (stats.isEmpty()) {
-                        send(message.chat, "У вас пока нет категорий")
-                        return@onCommand
-                    }
-
-                    val statsText = buildString {
-                        appendLine("*📁 Ваши категории:*")
-                        appendLine()
-                        stats.forEach { (cat, count) ->
-                            appendLine("• ${cat.escapeMarkdownV2()}: $count заметок")
-                        }
-                    }.trimIndent()
-
-                    val keyboard = inlineKeyboard {
-                        stats.keys.chunked(2).forEach { rowCats ->
-                            row {
-                                rowCats.forEach { cat ->
-                                    dataButton("📁 $cat", "category:$cat")
-                                }
-                            }
-                        }
-                    }
-
-                    send(
-                        message.chat,
-                        statsText,
-                        parseMode = MarkdownV2,
-                        replyMarkup = keyboard
-                    )
-                } else {
-                    val notes = botService.getNotesByCategory(userId, category)
-
-                    if (notes.isEmpty()) {
-                        send(message.chat, "Нет заметок в категории: $category")
-                        return@onCommand
-                    }
-
-                    val notesText = buildString {
-                        appendLine("*📁 Категория: ${category.escapeMarkdownV2()}*")
-                        appendLine("Найдено ${notes.size} заметок")
-                        appendLine()
-
-                        notes.take(10).forEachIndexed { index, note ->
-                            appendLine("${index + 1}\\. ${note.content.take(100).escapeMarkdownV2()}")
-                            appendLine()
-                        }
-                    }.trimIndent()
-
-                    send(message.chat, notesText, parseMode = MarkdownV2)
-                }
-            } catch (e: Exception) {
-                logger.error("Error handling category", e)
-                send(message.chat, "❌ Произошла ошибка")
-            }
-        }
-
-        // Команда /stats
-        onCommand("stats") { message ->
-            val userId = message.chat.id.chatId
-
-            try {
-                val notesCount = botService.getNotesCount(userId)
-                val tags = botService.getUserTags(userId)
-                val categories = botService.getCategoryStats(userId)
-
-                val statsText = buildString {
-                    appendLine("*📊 Статистика вашей базы знаний:*")
-                    appendLine()
-                    appendLine("📝 Всего заметок: $notesCount")
-                    appendLine("🏷 Уникальных тегов: ${tags.size}")
-                    appendLine("📁 Категорий: ${categories.size}")
-
-                    if (categories.isNotEmpty()) {
-                        appendLine()
-                        appendLine("*Топ категорий:*")
-                        categories.entries
-                            .sortedByDescending { it.value }
-                            .take(5)
-                            .forEach { (cat, count) ->
-                                appendLine("• ${cat.escapeMarkdownV2()}: $count")
-                            }
-                    }
-
-                    if (tags.isNotEmpty()) {
-                        appendLine()
-                        appendLine("*Популярные теги:*")
-                        appendLine(tags.take(10).joinToString(", ") { "#${it.escapeMarkdownV2()}" })
-                    }
-                }.trimIndent()
-
-                send(message.chat, statsText, parseMode = MarkdownV2)
-            } catch (e: Exception) {
-                logger.error("Error getting stats", e)
-                send(message.chat, "❌ Ошибка получения статистики")
-            }
-        }
-
-        // Команда /similar
-        onCommand("similar") { message ->
-            val userId = message.chat.id.chatId
-            val noteId = message.content.text.substringAfter("/similar").trim()
-
-            if (noteId.isEmpty()) {
-                send(message.chat, "Укажите ID заметки: /similar [id]")
-                return@onCommand
-            }
-
-            val tempMsg = send(message.chat, "🔍 Ищу похожие заметки...")
-
-            try {
-                val similar = botService.findSimilarNotes(userId, noteId)
-
-                if (similar.isEmpty()) {
-                    editMessageText(
-                        message.chat,
-                        tempMsg.messageId,
-                        "Похожие заметки не найдены"
-                    )
-                    return@onCommand
-                }
-
-                val similarText = buildString {
-                    appendLine("*🔗 Похожие заметки:*")
-                    appendLine()
-
-                    similar.forEachIndexed { index, note ->
-                        appendLine("${index + 1}\\. ${note.content.take(150).escapeMarkdownV2()}")
-                        appendLine("   🆔 `${note.id}`")
-                        appendLine()
-                    }
-                }.trimIndent()
-
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    similarText,
-                    parseMode = MarkdownV2
-                )
-            } catch (e: Exception) {
-                logger.error("Error finding similar", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Ошибка поиска похожих заметок"
-                )
-            }
-        }
-
-        // Команда /delete
-        onCommand("delete") { message ->
-            val noteId = message.content.text.substringAfter("/delete").trim()
-
-            if (noteId.isEmpty()) {
-                send(message.chat, "Укажите ID заметки: /delete [id]")
-                return@onCommand
-            }
-
-            send(
-                message.chat,
-                "Вы уверены, что хотите удалить заметку?",
-                replyMarkup = inlineKeyboard {
-                    row {
-                        dataButton("✅ Да", "confirm_delete:$noteId")
-                        dataButton("❌ Нет", "cancel_delete")
-                    }
-                }
-            )
-        }
-
-        // Команда /export
-        onCommand("export") { message ->
-            val userId = message.chat.id.chatId
-
-            val tempMsg = send(message.chat, "📥 Экспортирую вашу базу знаний...")
-
-            try {
-                val notes = botService.getUserNotes(userId, 1000)
-
-                if (notes.isEmpty()) {
-                    editMessageText(
-                        message.chat,
-                        tempMsg.messageId,
-                        "У вас нет заметок для экспорта"
-                    )
-                    return@onCommand
-                }
-
-                val export = buildString {
-                    appendLine("=== ЭКСПОРТ БАЗЫ ЗНАНИЙ ===")
-                    appendLine("Дата: ${LocalDateTime.now()}")
-                    appendLine("Всего заметок: ${notes.size}")
-                    appendLine("=" .repeat(30))
-                    appendLine()
-
-                    notes.forEach { note ->
-                        appendLine("ID: ${note.id}")
-                        appendLine("Дата: ${note.createdAt}")
-                        note.category?.let { appendLine("Категория: $it") }
-                        if (note.tags.isNotEmpty()) {
-                            appendLine("Теги: ${note.tags.joinToString(", ")}")
-                        }
-                        appendLine("Содержание:")
-                        appendLine(note.content)
-                        appendLine("-".repeat(30))
-                        appendLine()
-                    }
-                }
-
-                // Отправляем как документ
-                val fileName = "knowledge_base_export_${System.currentTimeMillis()}.txt"
-                val packet = ByteReadPacket(export.toByteArray())
-
-                sendDocument(
-                    message.chat,
-                    InputFile.fromInput(fileName) { packet },
-                    text = "✅ Экспорт готов! Всего заметок: ${notes.size}"
-                )
-
-                deleteMessage(message.chat, tempMsg.messageId)
-            } catch (e: Exception) {
-                logger.error("Error exporting", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Ошибка экспорта"
-                )
-            }
-        }
-
-        // Команда /process - обработка embeddings
-        onCommand("process") { message ->
-            val userId = message.chat.id.chatId
-
-            val tempMsg = send(message.chat, "⚙️ Обрабатываю заметки без embeddings...")
-
-            try {
-                val processed = botService.processEmbeddings(userId)
-
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "✅ Обработано заметок: $processed"
-                )
-            } catch (e: Exception) {
-                logger.error("Error processing embeddings", e)
-                editMessageText(
-                    message.chat,
-                    tempMsg.messageId,
-                    "❌ Ошибка обработки embeddings"
-                )
-            }
-        }
+      } catch (e: Exception) {
+        logger.error("Error adding note", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Произошла ошибка при сохранении"
+        )
+      }
     }
 
-    private fun getMainKeyboard() = replyKeyboard(
-        resizeKeyboard = true,
-        oneTimeKeyboard = false
-    ) {
-        row {
-            simpleButton("📝 Добавить заметку")
-            simpleButton("❓ Задать вопрос")
+    // Команда /search
+    onCommand("search") { message ->
+      val userId = message.chat.id.chatId
+      val query = message.content.text.substringAfter("/search").trim()
+
+      if (query.isEmpty()) {
+        send(message.chat, "Укажите поисковый запрос после /search")
+        return@onCommand
+      }
+
+      val tempMsg = send(message.chat, "🔍 Ищу...")
+
+      try {
+        val results = botService.searchNotes(userId, query)
+
+        if (results.notes.isEmpty()) {
+          editMessageText(
+            message.chat,
+            tempMsg.messageId,
+            "Не найдено заметок по запросу: *$query*",
+            parseMode = MarkdownV2
+          )
+          return@onCommand
         }
+
+        val resultText = buildString {
+          appendLine("*Найдено ${results.totalFound} заметок:*")
+          appendLine()
+
+          results.notes.take(5).forEachIndexed { index, note ->
+            appendLine("${index + 1}\\. ${note.content.take(100).escapeMarkdownV2()}")
+            if (note.tags.isNotEmpty()) {
+              appendLine("   🏷 ${note.tags.joinToString(", ") { it.escapeMarkdownV2() }}")
+            }
+            appendLine("   🆔 `${note.id}`")
+            appendLine()
+          }
+        }.trimIndent()
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          resultText,
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error searching", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка при поиске"
+        )
+      }
     }
+
+    // Команда /ask
+    onCommand("ask") { message ->
+      val userId = message.chat.id.chatId
+      val question = message.content.text.substringAfter("/ask").trim()
+
+      if (question.isEmpty()) {
+        send(message.chat, "Задайте вопрос после команды /ask")
+        return@onCommand
+      }
+
+      val tempMsg = send(message.chat, "🤔 Анализирую базу знаний...")
+
+      try {
+        val response = botService.askQuestion(userId, question)
+
+        val answerText = buildString {
+          appendLine("*Вопрос:* ${question.escapeMarkdownV2()}")
+          appendLine()
+          appendLine("*Ответ:*")
+          appendLine(response.answer.escapeMarkdownV2())
+
+          if (response.sources.isNotEmpty()) {
+            appendLine()
+            appendLine("*Источники:*")
+            response.sources.forEach { source ->
+              appendLine("• ${source.escapeMarkdownV2()}")
+            }
+          }
+        }.trimIndent()
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          answerText,
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error processing question", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка обработки вопроса"
+        )
+      }
+    }
+
+    // Команда /mynotes
+    onCommand("mynotes") { message ->
+      val userId = message.chat.id.chatId
+      val limitStr = message.content.text.substringAfter("/mynotes").trim()
+      val limit = limitStr.toIntOrNull() ?: 5
+
+      try {
+        val notes = botService.getUserNotes(userId, limit)
+
+        if (notes.isEmpty()) {
+          send(message.chat, "У вас пока нет заметок. Используйте /add для добавления.")
+          return@onCommand
+        }
+
+        val notesText = buildString {
+          appendLine("*📚 Ваши последние $limit заметок:*")
+          appendLine()
+
+          notes.forEachIndexed { index, note ->
+            appendLine("${index + 1}\\. ${note.content.take(150).escapeMarkdownV2()}")
+            appendLine("   📅 ${note.createdAt.take(10)}")
+            appendLine("   🆔 `${note.id}`")
+            appendLine()
+          }
+        }.trimIndent()
+
+        send(
+          message.chat,
+          notesText,
+          parseMode = MarkdownV2,
+          replyMarkup = inlineKeyboard {
+            row {
+              dataButton("📥 Показать еще", "more:${limit + 5}")
+            }
+          }
+        )
+      } catch (e: Exception) {
+        logger.error("Error getting notes", e)
+        send(message.chat, "❌ Ошибка получения заметок")
+      }
+    }
+
+    // Команда /tags
+    onCommand("tags") { message ->
+      val userId = message.chat.id.chatId
+
+      try {
+        val tags = botService.getUserTags(userId)
+
+        if (tags.isEmpty()) {
+          send(message.chat, "У вас пока нет тегов")
+          return@onCommand
+        }
+
+        val tagsText = buildString {
+          appendLine("*🏷 Ваши теги:*")
+          appendLine()
+          tags.forEach { tag ->
+            appendLine("#${tag.escapeMarkdownV2()}")
+          }
+        }.trimIndent()
+
+        val keyboard = inlineKeyboard {
+          tags.chunked(3).forEach { row ->
+            row {
+              row.forEach { tag ->
+                dataButton("#$tag", "tag:$tag")
+              }
+            }
+          }
+        }
+
+        send(
+          message.chat,
+          tagsText,
+          parseMode = MarkdownV2,
+          replyMarkup = keyboard
+        )
+      } catch (e: Exception) {
+        logger.error("Error getting tags", e)
+        send(message.chat, "❌ Ошибка получения тегов")
+      }
+    }
+
+    // Команда /category
+    onCommand("category") { message ->
+      val userId = message.chat.id.chatId
+      val category = message.content.text.substringAfter("/category").trim()
+
+      try {
+        if (category.isEmpty()) {
+          val stats = botService.getCategoryStats(userId)
+
+          if (stats.isEmpty()) {
+            send(message.chat, "У вас пока нет категорий")
+            return@onCommand
+          }
+
+          val statsText = buildString {
+            appendLine("*📁 Ваши категории:*")
+            appendLine()
+            stats.forEach { (cat, count) ->
+              appendLine("• ${cat.escapeMarkdownV2()}: $count заметок")
+            }
+          }.trimIndent()
+
+          val keyboard = inlineKeyboard {
+            stats.keys.chunked(2).forEach { rowCats ->
+              row {
+                rowCats.forEach { cat ->
+                  dataButton("📁 $cat", "category:$cat")
+                }
+              }
+            }
+          }
+
+          send(
+            message.chat,
+            statsText,
+            parseMode = MarkdownV2,
+            replyMarkup = keyboard
+          )
+        } else {
+          val notes = botService.getNotesByCategory(userId, category)
+
+          if (notes.isEmpty()) {
+            send(message.chat, "Нет заметок в категории: $category")
+            return@onCommand
+          }
+
+          val notesText = buildString {
+            appendLine("*📁 Категория: ${category.escapeMarkdownV2()}*")
+            appendLine("Найдено ${notes.size} заметок")
+            appendLine()
+
+            notes.take(10).forEachIndexed { index, note ->
+              appendLine("${index + 1}\\. ${note.content.take(100).escapeMarkdownV2()}")
+              appendLine()
+            }
+          }.trimIndent()
+
+          send(message.chat, notesText, parseMode = MarkdownV2)
+        }
+      } catch (e: Exception) {
+        logger.error("Error handling category", e)
+        send(message.chat, "❌ Произошла ошибка")
+      }
+    }
+
+    // Команда /stats
+    onCommand("stats") { message ->
+      val userId = message.chat.id.chatId
+
+      try {
+        val notesCount = botService.getNotesCount(userId)
+        val tags = botService.getUserTags(userId)
+        val categories = botService.getCategoryStats(userId)
+
+        val statsText = buildString {
+          appendLine("*📊 Статистика вашей базы знаний:*")
+          appendLine()
+          appendLine("📝 Всего заметок: $notesCount")
+          appendLine("🏷 Уникальных тегов: ${tags.size}")
+          appendLine("📁 Категорий: ${categories.size}")
+
+          if (categories.isNotEmpty()) {
+            appendLine()
+            appendLine("*Топ категорий:*")
+            categories.entries
+              .sortedByDescending { it.value }
+              .take(5)
+              .forEach { (cat, count) ->
+                appendLine("• ${cat.escapeMarkdownV2()}: $count")
+              }
+          }
+
+          if (tags.isNotEmpty()) {
+            appendLine()
+            appendLine("*Популярные теги:*")
+            appendLine(tags.take(10).joinToString(", ") { "#${it.escapeMarkdownV2()}" })
+          }
+        }.trimIndent()
+
+        send(message.chat, statsText, parseMode = MarkdownV2)
+      } catch (e: Exception) {
+        logger.error("Error getting stats", e)
+        send(message.chat, "❌ Ошибка получения статистики")
+      }
+    }
+
+    // Команда /similar
+    onCommand("similar") { message ->
+      val userId = message.chat.id.chatId
+      val noteId = message.content.text.substringAfter("/similar").trim()
+
+      if (noteId.isEmpty()) {
+        send(message.chat, "Укажите ID заметки: /similar [id]")
+        return@onCommand
+      }
+
+      val tempMsg = send(message.chat, "🔍 Ищу похожие заметки...")
+
+      try {
+        val similar = botService.findSimilarNotes(userId, noteId)
+
+        if (similar.isEmpty()) {
+          editMessageText(
+            message.chat,
+            tempMsg.messageId,
+            "Похожие заметки не найдены"
+          )
+          return@onCommand
+        }
+
+        val similarText = buildString {
+          appendLine("*🔗 Похожие заметки:*")
+          appendLine()
+
+          similar.forEachIndexed { index, note ->
+            appendLine("${index + 1}\\. ${note.content.take(150).escapeMarkdownV2()}")
+            appendLine("   🆔 `${note.id}`")
+            appendLine()
+          }
+        }.trimIndent()
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          similarText,
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error finding similar", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка поиска похожих заметок"
+        )
+      }
+    }
+
+    // Команда /delete
+    onCommand("delete") { message ->
+      val noteId = message.content.text.substringAfter("/delete").trim()
+
+      if (noteId.isEmpty()) {
+        send(message.chat, "Укажите ID заметки: /delete [id]")
+        return@onCommand
+      }
+
+      send(
+        message.chat,
+        "Вы уверены, что хотите удалить заметку?",
+        replyMarkup = inlineKeyboard {
+          row {
+            dataButton("✅ Да", "confirm_delete:$noteId")
+            dataButton("❌ Нет", "cancel_delete")
+          }
+        }
+      )
+    }
+
+    // Команда /export
+    onCommand("export") { message ->
+      val userId = message.chat.id.chatId
+
+      val tempMsg = send(message.chat, "📥 Экспортирую вашу базу знаний...")
+
+      try {
+        val notes = botService.getUserNotes(userId, 1000)
+
+        if (notes.isEmpty()) {
+          editMessageText(
+            message.chat,
+            tempMsg.messageId,
+            "У вас нет заметок для экспорта"
+          )
+          return@onCommand
+        }
+
+        val export = buildString {
+          appendLine("=== ЭКСПОРТ БАЗЫ ЗНАНИЙ ===")
+          appendLine("Дата: ${LocalDateTime.now()}")
+          appendLine("Всего заметок: ${notes.size}")
+          appendLine("=".repeat(30))
+          appendLine()
+
+          notes.forEach { note ->
+            appendLine("ID: ${note.id}")
+            appendLine("Дата: ${note.createdAt}")
+            note.category?.let { appendLine("Категория: $it") }
+            if (note.tags.isNotEmpty()) {
+              appendLine("Теги: ${note.tags.joinToString(", ")}")
+            }
+            appendLine("Содержание:")
+            appendLine(note.content)
+            appendLine("-".repeat(30))
+            appendLine()
+          }
+        }
+
+        // Отправляем как документ
+        val fileName = "knowledge_base_export_${System.currentTimeMillis()}.txt"
+        val packet = ByteReadPacket(export.toByteArray())
+
+        sendDocument(
+          message.chat,
+          InputFile.fromInput(fileName) { packet },
+          text = "✅ Экспорт готов! Всего заметок: ${notes.size}"
+        )
+
+        deleteMessage(message.chat, tempMsg.messageId)
+      } catch (e: Exception) {
+        logger.error("Error exporting", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка экспорта"
+        )
+      }
+    }
+
+    // Команда /process - обработка embeddings
+    onCommand("process") { message ->
+      val userId = message.chat.id.chatId
+
+      val tempMsg = send(message.chat, "⚙️ Обрабатываю заметки без embeddings...")
+
+      try {
+        val processed = botService.processEmbeddings(userId)
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "✅ Обработано заметок: $processed"
+        )
+      } catch (e: Exception) {
+        logger.error("Error processing embeddings", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка обработки embeddings"
+        )
+      }
+    }
+  }
+
+  private fun getMainKeyboard() = replyKeyboard(
+    resizeKeyboard = true,
+    oneTimeKeyboard = false
+  ) {
+    row {
+      simpleButton("📝 Добавить заметку")
+      simpleButton("❓ Задать вопрос")
+    }
+  }
 }

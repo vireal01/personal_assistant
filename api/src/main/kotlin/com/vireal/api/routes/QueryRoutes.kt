@@ -8,13 +8,13 @@ import io.ktor.server.routing.*
 import com.vireal.shared.models.QueryRequest
 
 fun Route.queryRoutes() {
-    val queryService = QueryService()
+  val queryService = QueryService()
 
-    route("/api/query") {
-        post {
-            val request = call.receive<QueryRequest>()
-            val response = queryService.processQuery(request.userId, request.question)
-            call.respond(response)
-        }
+  route("/api/query") {
+    post {
+      val request = call.receive<QueryRequest>()
+      val response = queryService.processQuery(request.userId, request.question)
+      call.respond(response)
     }
+  }
 }

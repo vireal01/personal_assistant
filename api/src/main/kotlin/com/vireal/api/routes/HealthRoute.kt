@@ -8,18 +8,18 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class HealthStatus(
-    val status: String,
-    val timestamp: Long
+  val status: String,
+  val timestamp: Long
 )
 
 fun Route.healthRoute() {
-    get("/health") {
-        call.respond(
-            HttpStatusCode.OK,
-            HealthStatus(
-                status = "healthy",
-                timestamp = System.currentTimeMillis()
-            )
-        )
-    }
+  get("/health") {
+    call.respond(
+      HttpStatusCode.OK,
+      HealthStatus(
+        status = "healthy",
+        timestamp = System.currentTimeMillis()
+      )
+    )
+  }
 }
