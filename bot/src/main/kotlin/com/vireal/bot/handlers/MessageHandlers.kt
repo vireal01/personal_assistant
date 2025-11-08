@@ -7,9 +7,13 @@ import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
+import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onDocument
+import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onMediaContent
+import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onMediaGroup
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onText
 import dev.inmo.tgbotapi.extensions.utils.ifFromChannel
 import dev.inmo.tgbotapi.extensions.utils.ifFromSupergroup
+import dev.inmo.tgbotapi.extensions.utils.ifMessageContent
 import dev.inmo.tgbotapi.extensions.utils.mediaContentOrNull
 import dev.inmo.tgbotapi.extensions.utils.mediaGroupContentOrNull
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
@@ -46,6 +50,26 @@ object MessageHandlers {
   private const val FORWARD_BATCH_DELAY = 1000L // 1 second
 
   suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
+
+    onMediaGroup {
+      println("Received media group: ${it.mediaGroupContentOrNull()}")
+      println("mainContent.text${it.mainContent.text}")
+      println("${it.mainContent.logger}")
+      println("mainContent.textSources: ${it.mainContent.textSources.joinToString("\n")}")
+      println(it.mainContent.ifMessageContent { messageContent ->
+       println("ifMessageContent $messageContent")
+      })
+    }
+
+    onMediaContent {
+      println("Received media content: ${it.content}")
+      logger.d("logger: Received media content: ${it.content}" )
+      println("${it.content.logger}")
+    }
+
+    onDocument {
+      println("Received document: ${it.content}")
+    }
 
     // Обработка обычных текстовых сообщений
     onText { message ->
