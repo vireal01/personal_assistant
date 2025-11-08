@@ -12,8 +12,6 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.utils.row
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -39,7 +37,7 @@ object MessageHandlers {
 
   private val forwardBatches = ConcurrentHashMap<Long, ForwardBatch>()
   private val batchTimers = ConcurrentHashMap<Long, Job>()
-  private const val FORWARD_BATCH_DELAY = 1000L // 1 секунда
+  private const val FORWARD_BATCH_DELAY = 1000L // 1 second
 
   suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
 
@@ -51,17 +49,13 @@ object MessageHandlers {
 
       // Обработка пересланных сообщений
       if (message.forwardInfo != null) {
-        // Отменяем предыдущий таймер для этого пользователя, если он есть
         batchTimers[userId]?.cancel()
 
-        // Добавляем сообщение в пачку
         val batch = forwardBatches.getOrPut(userId) { ForwardBatch(mutableListOf()) }
         batch.messages.add(message)
 
-        // Запускаем новый таймер
-        batchTimers[userId] = CoroutineScope(Dispatchers.Default).launch {
+        batchTimers[userId] = launch {
           delay(FORWARD_BATCH_DELAY)
-          // Забираем пачку и удаляем ее из хранилища
           forwardBatches.remove(userId)?.let {
             processForwardBatch(userId, it.messages, botService)
           }
@@ -334,7 +328,7 @@ private suspend fun BehaviourContext.processForwardBatch(
       editMessageText(chat, tempMsg.messageId, "❌ Ошибка сохранения пачки сообщений: ${response.message}")
     }
   } catch (e: Exception) {
-    MessageHandlers.logger.error("Error processing forward batch for user $userId", e)
+    logger.error("Error processing forward batch for user $userId", e)
     send(chat, "❌ Произошла ошибка при обработке пересланных сообщений.")
   }
 }
