@@ -1,31 +1,30 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
-import dev.inmo.kslog.common.d
 import dev.inmo.kslog.common.error
 import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onDocument
-import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onMediaContent
-import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onMediaGroup
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onText
+import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onTextedMediaContent
 import dev.inmo.tgbotapi.extensions.utils.ifFromChannel
-import dev.inmo.tgbotapi.extensions.utils.ifFromSupergroup
-import dev.inmo.tgbotapi.extensions.utils.ifMessageContent
-import dev.inmo.tgbotapi.extensions.utils.mediaContentOrNull
-import dev.inmo.tgbotapi.extensions.utils.mediaGroupContentOrNull
+import dev.inmo.tgbotapi.extensions.utils.textLinkTextSourceOrNull
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
+import dev.inmo.tgbotapi.extensions.utils.uRLTextSourceOrNull
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
+import dev.inmo.tgbotapi.types.message.content.TextedContent
+import dev.inmo.tgbotapi.types.message.textsources.link
 import dev.inmo.tgbotapi.utils.row
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.collections.set
 
 object MessageHandlers {
   private val userStates = mutableMapOf<Long, UserState>()
@@ -42,7 +41,7 @@ object MessageHandlers {
   }
 
   private data class ForwardBatch(
-    val messages: MutableList<CommonMessage<TextContent>>
+    val messages: MutableList<CommonMessage<TextedContent>>
   )
 
   private val forwardBatches = ConcurrentHashMap<Long, ForwardBatch>()
@@ -51,80 +50,55 @@ object MessageHandlers {
 
   suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
 
-    onMediaGroup {
-      println("Received media group: ${it.mediaGroupContentOrNull()}")
-      println("mainContent.text${it.mainContent.text}")
-      println("${it.mainContent.logger}")
-      println("mainContent.textSources: ${it.mainContent.textSources.joinToString("\n")}")
-      println(it.mainContent.ifMessageContent { messageContent ->
-       println("ifMessageContent $messageContent")
-      })
-    }
 
-    onMediaContent {
-      println("Received media content: ${it.content}")
-      logger.d("logger: Received media content: ${it.content}" )
-      println("${it.content.logger}")
+    // Text with any media
+    onTextedMediaContent { message ->
+      if (isHandledBatchOfForwardedMessages(message)) {
+        return@onTextedMediaContent
+      }
+
+      handleSingleMessage(message = message, botService = botService)
     }
 
     onDocument {
       println("Received document: ${it.content}")
     }
 
-    // Обработка обычных текстовых сообщений
+    // Plain text
     onText { message ->
-      val userId = message.chat.id.chatId
-      println(message.content)
-      println("Received text message from user $userId: ${message.content.text}")
-      println("is mediaGroupContent: ${message.content.mediaGroupContentOrNull().toString()}")
-      println("is mediaContent: ${message.content.mediaContentOrNull().toString()}")
       val text = message.content.text
 
-      // Обработка пересланных сообщений
-      if (message.forwardInfo != null) {
-
-        message.forwardInfo?.ifFromChannel {
-          println("https://t.me/${it.channelChat.id}/${it.messageId}")
-        }
-
-        message.forwardInfo?.ifFromSupergroup {
-          println("https://t.me/${it.group.id}/")
-        }
-
-        batchTimers[userId]?.cancel()
-
-        val batch = forwardBatches.getOrPut(userId) { ForwardBatch(mutableListOf()) }
-        batch.messages.add(message)
-
-        batchTimers[userId] = launch {
-          delay(FORWARD_BATCH_DELAY)
-          forwardBatches.remove(userId)?.let {
-            processForwardBatch(userId, it.messages)
-          }
-          batchTimers.remove(userId)
-        }
+      if (isHandledBatchOfForwardedMessages(message)) {
         return@onText
       }
 
       // Игнорируем команды
       if (text.startsWith("/")) return@onText
 
-      // Обработка кнопок клавиатуры
-      when (text) {
-        "📝 Добавить заметку" -> {
-          send(message.chat, "Отправьте текст заметки:")
-          userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
-        }
+      handleSingleMessage(message = message, botService = botService)
+    }
+  }
+
+  suspend fun BehaviourContext.handleSingleMessage(
+    message: CommonMessage<TextedContent>,
+    botService: BotService
+  ) {
+    val userId = message.chat.id.chatId
+    when (val text = message.content.text) {
+      "📝 Добавить заметку" -> {
+        send(message.chat, "Отправьте текст заметки:")
+        userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
+      }
 
 //        "🔍 Поиск" -> {
 //          send(message.chat, "Введите поисковый запрос:")
 //          userStates[userId] = UserState(waitingFor = WaitingState.SEARCH_QUERY)
 //        }
 
-        "❓ Задать вопрос" -> {
-          send(message.chat, "Задайте ваш вопрос:")
-          userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
-        }
+      "❓ Задать вопрос" -> {
+        send(message.chat, "Задайте ваш вопрос:")
+        userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
+      }
 
 //        "📚 Мои заметки" -> {
 //          handleMyNotes(message, botService)
@@ -138,44 +112,67 @@ object MessageHandlers {
 //          handleStats(message, botService)
 //        }
 
-        else -> {
-          // Проверяем состояние пользователя
-          val state = userStates[userId]
+      else -> {
+        val formatedText = message.content.processTextAndTextSources()
+        val state = userStates[userId]
 
-          when (state?.waitingFor) {
-            WaitingState.NOTE_TEXT -> {
-              handleAddNote(message, text, botService)
-              userStates.remove(userId)
-            }
+        when (state?.waitingFor) {
+          WaitingState.NOTE_TEXT -> {
+            handleAddNote(message, formatedText, botService)
+            userStates.remove(userId)
+          }
 
-            WaitingState.SEARCH_QUERY -> {
-              handleSearch(message, text, botService)
-              userStates.remove(userId)
-            }
+          WaitingState.SEARCH_QUERY -> {
+            handleSearch(message, formatedText, botService)
+            userStates.remove(userId)
+          }
 
-            WaitingState.QUESTION -> {
-              handleQuestion(message, text, botService)
-              userStates.remove(userId)
-            }
+          WaitingState.QUESTION -> {
+            handleQuestion(message, formatedText, botService)
+            userStates.remove(userId)
+          }
 
-            else -> {
-              // Предлагаем действия для текста
-              userStates[userId] = UserState(lastMessage = text)
+          else -> {
+            userStates[userId] = UserState(lastMessage = text)
 
-              send(
-                message.chat,
-                "Что сделать с этим текстом?",
-                replyMarkup = createActionKeyboard()
-              )
-            }
+            send(
+              message.chat,
+              "Что сделать с этим текстом?",
+              replyMarkup = createActionKeyboard()
+            )
           }
         }
       }
     }
   }
 
+  fun BehaviourContext.isHandledBatchOfForwardedMessages(message: CommonMessage<TextedContent>): Boolean {
+    val userId = message.chat.id.chatId
+    if (message.forwardInfo != null) {
+
+      message.forwardInfo?.ifFromChannel {
+        val link = "https://t.me/${it.channelChat.username?.usernameWithoutAt}/${it.messageId}"
+      }
+
+      batchTimers[userId]?.cancel()
+
+      val batch = forwardBatches.getOrPut(userId) { ForwardBatch(mutableListOf()) }
+      batch.messages.add(message)
+
+      batchTimers[userId] = launch {
+        delay(FORWARD_BATCH_DELAY)
+        forwardBatches.remove(userId)?.let {
+          processForwardBatch(userId, it.messages)
+        }
+        batchTimers.remove(userId)
+      }
+      return true
+    }
+    return false
+  }
+
   private suspend fun BehaviourContext.handleAddNote(
-    message: CommonMessage<TextContent>,
+    message: CommonMessage<TextedContent>,
     text: String,
     botService: BotService
   ) {
@@ -209,7 +206,7 @@ object MessageHandlers {
   }
 
   private suspend fun BehaviourContext.handleSearch(
-    message: CommonMessage<TextContent>,
+    message: CommonMessage<TextedContent>,
     query: String,
     botService: BotService
   ) {
@@ -238,7 +235,7 @@ object MessageHandlers {
   }
 
   private suspend fun BehaviourContext.handleQuestion(
-    message: CommonMessage<TextContent>,
+    message: CommonMessage<TextedContent>,
     question: String,
     botService: BotService
   ) {
@@ -355,14 +352,16 @@ private fun createActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
 
 private suspend fun BehaviourContext.processForwardBatch(
   userId: Long,
-  messages: List<CommonMessage<TextContent>>
+  messages: List<CommonMessage<TextedContent>>
 ) {
   if (messages.isEmpty()) return
   val firstMessage = messages.first()
   val chat = firstMessage.chat
 
   try {
-    val mergedText = messages.joinToString("\n\n") { it.content.text }
+    val mergedText = messages
+      .sortedBy { it.date }
+      .joinToString("\n\n---\n\n") { it.content.processTextAndTextSources() }
     MessageHandlers.setUserState(userId, MessageHandlers.UserState(lastMessage = mergedText))
 
     val messageText = if (messages.size == 1) {
@@ -377,7 +376,30 @@ private suspend fun BehaviourContext.processForwardBatch(
       replyMarkup = createActionKeyboard()
     )
   } catch (e: Exception) {
-    logger.error("Error processing forward batch for user $userId", e)
+    logger.error(e)
     send(chat, "❌ Произошла ошибка при обработке пересланных сообщений.")
   }
+}
+
+private fun TextedContent.processTextAndTextSources(): String {
+  val text = this.text
+  val textSources = this.textSources
+  val builder = StringBuilder()
+
+  if (!text.isNullOrBlank()) {
+    builder.append(text)
+  }
+
+  textSources.forEach { source ->
+    source.uRLTextSourceOrNull()?.let { urlSource ->
+      builder.append("\n")
+      builder.append(link(urlSource.source, urlSource.asText).markdownV2)
+    }
+    source.textLinkTextSourceOrNull()?.let { linkSource ->
+      builder.append("\n")
+      builder.append(link(text = linkSource.source, url = linkSource.url).markdownV2)
+    }
+  }
+
+  return builder.toString()
 }
