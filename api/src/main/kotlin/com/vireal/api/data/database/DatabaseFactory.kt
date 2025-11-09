@@ -67,6 +67,10 @@ object DatabaseFactory {
         val connection = TransactionManager.current().connection.connection as Connection
 
         connection.createStatement().use { statement ->
+          // 0. Включаем pg_trgm сразу
+          statement.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+          println("✓ pg_trgm extension enabled")
+
           // 1. Включаем расширение pgvector
           statement.execute("CREATE EXTENSION IF NOT EXISTS vector")
           println("✓ pgvector extension enabled")
@@ -147,7 +151,7 @@ object DatabaseFactory {
           )
           println("✓ Composite index for user filtering created")
 
-          // 8. Создаем индексы для текстового поиска
+          // 8. Создаем trigram индекс для текстового поиска
           statement.execute(
             """
                         CREATE INDEX IF NOT EXISTS idx_notes_content_trgm
@@ -156,7 +160,7 @@ object DatabaseFactory {
           )
           println("✓ Trigram index for text search created")
 
-          // 9. Оптимизация для категорий и тегов
+          // 9. Оптимизация для категорий
           statement.execute(
             """
                         CREATE INDEX IF NOT EXISTS idx_notes_user_category_created
