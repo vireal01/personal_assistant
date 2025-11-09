@@ -304,6 +304,7 @@ object DatabaseFactory {
       }
     }
 
+// В миграции 7
     if (!appliedMigrations.contains(7)) {
       println("Applying migration 7: Convert tags and metadata to jsonb...")
 
@@ -315,7 +316,11 @@ object DatabaseFactory {
           statement.execute("DROP INDEX IF EXISTS idx_notes_tags_gin")
           println("✓ Dropped old tags index")
 
-          // 2. Конвертируй tags в jsonb
+          // 2. Удали DEFAULT для tags
+          statement.execute("ALTER TABLE notes ALTER COLUMN tags DROP DEFAULT")
+          println("✓ Dropped tags default")
+
+          // 3. Конвертируй tags в jsonb
           statement.execute(
             """
         ALTER TABLE notes
@@ -324,7 +329,15 @@ object DatabaseFactory {
           )
           println("✓ Tags column converted to jsonb")
 
-          // 3. Конвертируй metadata в jsonb (если ещё не сделано)
+          // 4. Установи новый DEFAULT для jsonb
+          statement.execute("ALTER TABLE notes ALTER COLUMN tags SET DEFAULT '[]'::jsonb")
+          println("✓ Set new tags default")
+
+          // 5. Удали DEFAULT для metadata
+          statement.execute("ALTER TABLE notes ALTER COLUMN metadata DROP DEFAULT")
+          println("✓ Dropped metadata default")
+
+          // 6. Конвертируй metadata в jsonb
           statement.execute(
             """
         ALTER TABLE notes
@@ -333,7 +346,11 @@ object DatabaseFactory {
           )
           println("✓ Metadata column converted to jsonb")
 
-          // 4. Создай правильный GIN индекс для jsonb
+          // 7. Установи новый DEFAULT для metadata
+          statement.execute("ALTER TABLE notes ALTER COLUMN metadata SET DEFAULT '{}'::jsonb")
+          println("✓ Set new metadata default")
+
+          // 8. Создай правильный GIN индекс для jsonb
           statement.execute(
             """
         CREATE INDEX idx_notes_tags_gin
@@ -342,7 +359,7 @@ object DatabaseFactory {
           )
           println("✓ GIN index for jsonb tags created")
 
-          // 5. Индекс для metadata (опционально)
+          // 9. Индекс для metadata (опционально)
           statement.execute(
             """
         CREATE INDEX idx_notes_metadata_gin
