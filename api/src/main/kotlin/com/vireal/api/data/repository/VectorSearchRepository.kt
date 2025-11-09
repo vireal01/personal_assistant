@@ -125,7 +125,7 @@ class VectorSearchRepository {
       val tagConditions = tags.map { "tags @> ?::jsonb" }
       whereConditions.add("(${tagConditions.joinToString(" OR ")})")
       tags.forEach { tag ->
-        params.add("[\"$tag\"]")  // JSON array format
+        params.add("[\"$tag\"]")
       }
     }
 

@@ -15,9 +15,9 @@ object Notes : Table("notes") {
   val createdAt = timestamp("created_at").default(Instant.now())
 
   // Метаданные хранятся в оптимизированных форматах
-  val tags = text("tags").default("[]")           // JSON array для GIN индекса
+  val tags = jsonb("tags").default("[]")
   val category = varchar("category", 50).nullable()
-  val metadata = text("metadata").default("{}")    // JSON object
+  val metadata = jsonb("metadata").default("{}")
   val embedding = vector("embedding", 1536).nullable()     // JSON array of floats
 
   override val primaryKey = PrimaryKey(id)
