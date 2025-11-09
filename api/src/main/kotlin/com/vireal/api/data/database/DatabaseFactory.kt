@@ -163,14 +163,7 @@ object DatabaseFactory {
                         ON notes(user_id, category, created_at DESC)
                     """
           )
-
-          statement.execute(
-            """
-                        CREATE INDEX IF NOT EXISTS idx_notes_tags_gin
-                        ON notes USING gin (tags)
-                    """
-          )
-          println("✓ Indexes for categories and tags created")
+          println("✓ Index for categories created")
         }
 
         SchemaMigrations.insert {
@@ -304,6 +297,66 @@ object DatabaseFactory {
       } catch (e: Exception) {
         println("Warning: Could not create materialized view: ${e.message}")
         // Не критично, продолжаем
+      }
+    }
+
+    if (!appliedMigrations.contains(7)) {
+      println("Applying migration 7: Convert tags and metadata to jsonb...")
+
+      try {
+        val connection = TransactionManager.current().connection.connection as Connection
+
+        connection.createStatement().use { statement ->
+          // 1. Удали старый неработающий индекс
+          statement.execute("DROP INDEX IF EXISTS idx_notes_tags_gin")
+          println("✓ Dropped old tags index")
+
+          // 2. Конвертируй tags в jsonb
+          statement.execute(
+            """
+        ALTER TABLE notes
+        ALTER COLUMN tags TYPE jsonb USING tags::jsonb
+        """
+          )
+          println("✓ Tags column converted to jsonb")
+
+          // 3. Конвертируй metadata в jsonb (если ещё не сделано)
+          statement.execute(
+            """
+        ALTER TABLE notes
+        ALTER COLUMN metadata TYPE jsonb USING metadata::jsonb
+        """
+          )
+          println("✓ Metadata column converted to jsonb")
+
+          // 4. Создай правильный GIN индекс для jsonb
+          statement.execute(
+            """
+        CREATE INDEX idx_notes_tags_gin
+        ON notes USING gin (tags jsonb_path_ops)
+        """
+          )
+          println("✓ GIN index for jsonb tags created")
+
+          // 5. Индекс для metadata (опционально)
+          statement.execute(
+            """
+        CREATE INDEX idx_notes_metadata_gin
+        ON notes USING gin (metadata jsonb_path_ops)
+        """
+          )
+          println("✓ GIN index for jsonb metadata created")
+        }
+
+        SchemaMigrations.insert {
+          it[version] = 7
+          it[appliedAt] = Instant.now()
+        }
+        println("✓ Migration 7 applied successfully")
+
+      } catch (e: Exception) {
+        println("Error applying migration 7: ${e.message}")
+        e.printStackTrace()
       }
     }
 
