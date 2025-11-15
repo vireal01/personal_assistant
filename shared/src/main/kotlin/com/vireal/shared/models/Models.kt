@@ -46,6 +46,7 @@ data class QueryRequest(
   val userId: Long,
   val question: String,
   val categories: List<String>? = null,
+  val extraContext: String? = null,
   val tags: List<String>? = null,
   val useSemanticSearch: Boolean = true, // Использовать векторный поиск
   val topK: Int = 5 // Количество наиболее релевантных результатов

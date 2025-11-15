@@ -43,7 +43,7 @@ class QueryService(
 
     // Генерируем ответ
     val answer = if (context.isNotEmpty()) {
-      llmService.generateAnswer(context, question)
+      llmService.generateAnswerKnowledgeBase(context, question)
     } else {
       "К сожалению, в базе знаний не найдено информации по вашему вопросу. " +
         "Попробуйте добавить соответствующие записи."
@@ -54,6 +54,14 @@ class QueryService(
       sources = notes.take(3).map { note ->
         "${note.content.take(100)}${if (note.content.length > 100) "..." else ""}"
       }
+    )
+  }
+
+  suspend fun processQueryOutsideKnowledgeBase(context: String, question: String): QueryResponse {
+    val answer = llmService.generateAnswerRaw(context, question)
+
+    return QueryResponse(
+      answer = answer,
     )
   }
 
@@ -227,7 +235,7 @@ class QueryService(
         hoursSince <= 720 -> 0.2     // Последний месяц
         else -> 0.0
       }
-    } catch (e: Exception) {
+    } catch (_: Exception) {
       0.0
     }
   }
@@ -287,7 +295,6 @@ class QueryService(
 
   private fun estimateTokens(text: String): Int {
     // Более точная оценка с учетом языка
-    val words = text.split(Regex("\\s+"))
     val avgCharsPerToken = if (text.any { it.code > 127 }) 2.5 else 4.0 // Русский vs English
     return (text.length / avgCharsPerToken).toInt()
   }

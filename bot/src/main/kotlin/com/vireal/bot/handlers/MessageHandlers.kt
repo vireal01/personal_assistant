@@ -9,14 +9,15 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onDocument
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onText
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onTextedMediaContent
+import dev.inmo.tgbotapi.extensions.utils.extensions.raw.text
 import dev.inmo.tgbotapi.extensions.utils.ifFromChannel
 import dev.inmo.tgbotapi.extensions.utils.textLinkTextSourceOrNull
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.extensions.utils.uRLTextSourceOrNull
+import dev.inmo.tgbotapi.types.ReplyInfo
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
-import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.types.message.content.TextedContent
 import dev.inmo.tgbotapi.types.message.textsources.link
 import dev.inmo.tgbotapi.utils.row
@@ -50,14 +51,13 @@ object MessageHandlers {
 
   suspend fun register(context: BehaviourContext, botService: BotService) = with(context) {
 
-
     // Text with any media
     onTextedMediaContent { message ->
-      if (isHandledBatchOfForwardedMessages(message)) {
-        return@onTextedMediaContent
+      when {
+        isHandledBatchOfForwardedMessages(message) -> return@onTextedMediaContent
+        isReplyProcessed(message, botService) -> return@onTextedMediaContent
+        else -> handleSingleMessage(message = message, botService = botService)
       }
-
-      handleSingleMessage(message = message, botService = botService)
     }
 
     onDocument {
@@ -66,16 +66,12 @@ object MessageHandlers {
 
     // Plain text
     onText { message ->
-      val text = message.content.text
-
-      if (isHandledBatchOfForwardedMessages(message)) {
-        return@onText
+      when {
+        isHandledBatchOfForwardedMessages(message) -> return@onText
+        isReplyProcessed(message, botService) -> return@onText
+        message.content.text.startsWith("/") -> return@onText
+        else -> handleSingleMessage(message = message, botService = botService)
       }
-
-      // Игнорируем команды
-      if (text.startsWith("/")) return@onText
-
-      handleSingleMessage(message = message, botService = botService)
     }
   }
 
@@ -128,7 +124,7 @@ object MessageHandlers {
           }
 
           WaitingState.QUESTION -> {
-            handleQuestion(message, formatedText, botService)
+            handleQuestionKnowledgeBase(message, formatedText, botService)
             userStates.remove(userId)
           }
 
@@ -234,105 +230,6 @@ object MessageHandlers {
     }
   }
 
-  private suspend fun BehaviourContext.handleQuestion(
-    message: CommonMessage<TextedContent>,
-    question: String,
-    botService: BotService
-  ) {
-    val userId = message.chat.id.chatId
-    val tempMsg = send(message.chat, "🤔 Анализирую...")
-
-    try {
-      val response = botService.askQuestion(userId, question)
-      editMessageText(
-        message.chat,
-        tempMsg.messageId,
-        response.answer
-      )
-    } catch (e: Exception) {
-      logger.error("Error processing question", e)
-      editMessageText(
-        message.chat,
-        tempMsg.messageId,
-        "❌ Ошибка обработки вопроса"
-      )
-    }
-  }
-
-  private suspend fun BehaviourContext.handleMyNotes(
-    message: CommonMessage<TextContent>,
-    botService: BotService
-  ) {
-    val userId = message.chat.id.chatId
-
-    try {
-      val notes = botService.getUserNotes(userId, 5)
-
-      val text = if (notes.isEmpty()) {
-        "У вас пока нет заметок"
-      } else {
-        buildString {
-          appendLine("📚 Ваши последние заметки:")
-          notes.forEachIndexed { i, note ->
-            appendLine("${i + 1}. ${note.content.take(100)}")
-          }
-        }
-      }
-
-      send(message.chat, text)
-    } catch (e: Exception) {
-      logger.error("Error getting notes", e)
-      send(message.chat, "❌ Ошибка получения заметок")
-    }
-  }
-
-  private suspend fun BehaviourContext.handleTags(
-    message: CommonMessage<TextContent>,
-    botService: BotService
-  ) {
-    val userId = message.chat.id.chatId
-
-    try {
-      val tags = botService.getUserTags(userId)
-
-      val text = if (tags.isEmpty()) {
-        "У вас пока нет тегов"
-      } else {
-        "🏷 Ваши теги:\n" + tags.joinToString(", ") { "#$it" }
-      }
-
-      send(message.chat, text)
-    } catch (e: Exception) {
-      logger.error("Error getting tags", e)
-      send(message.chat, "❌ Ошибка получения тегов")
-    }
-  }
-
-  private suspend fun BehaviourContext.handleStats(
-    message: CommonMessage<TextContent>,
-    botService: BotService
-  ) {
-    val userId = message.chat.id.chatId
-
-    try {
-      val count = botService.getNotesCount(userId)
-      val tags = botService.getUserTags(userId)
-      val categories = botService.getCategoryStats(userId)
-
-      val text = buildString {
-        appendLine("📊 Статистика:")
-        appendLine("📝 Заметок: $count")
-        appendLine("🏷 Тегов: ${tags.size}")
-        appendLine("📁 Категорий: ${categories.size}")
-      }
-
-      send(message.chat, text)
-    } catch (e: Exception) {
-      logger.error("Error getting stats", e)
-      send(message.chat, "❌ Ошибка получения статистики")
-    }
-  }
-
   fun getUserState(userId: Long): UserState? = userStates[userId]
   fun removeUserState(userId: Long) = userStates.remove(userId)
   fun setUserState(userId: Long, state: UserState) {
@@ -402,4 +299,26 @@ private fun TextedContent.processTextAndTextSources(): String {
   }
 
   return builder.toString()
+}
+
+
+private suspend fun BehaviourContext.isReplyProcessed(
+  message: CommonMessage<TextedContent>,
+  botService: BotService,
+): Boolean {
+  if (message.replyInfo == null) return false
+  message.replyInfo
+
+  val internalMessage = message.replyInfo as ReplyInfo.Internal
+  val messageText = internalMessage.message.text
+
+  if (messageText.isNullOrBlank()) return false
+
+  handleQuestionLLM(
+    message = message,
+    question = message.content.text.toString(),
+    context = messageText,
+    botService = botService,
+  )
+  return true
 }

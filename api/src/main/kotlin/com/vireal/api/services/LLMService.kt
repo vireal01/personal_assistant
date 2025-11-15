@@ -137,7 +137,15 @@ class LLMService {
     }
   }
 
-  suspend fun generateAnswer(context: String, question: String): String {
+  suspend fun generateAnswerKnowledgeBase(context: String, question: String): String {
+    return generateAnswerLLM(context, question, LlmServiceMode.KNOWLEDGE_BASED)
+  }
+
+  suspend fun generateAnswerRaw(context: String, question: String): String {
+    return generateAnswerLLM(context, question, LlmServiceMode.GENERATIVE_AI)
+  }
+
+  private suspend fun generateAnswerLLM(context: String, question: String, mode: LlmServiceMode): String {
     if (apiKey.isEmpty() || apiKey == "test_key") {
       return "LLM API ключ не настроен. Установите переменную окружения OPENAI_API_KEY"
     }
@@ -147,7 +155,11 @@ class LLMService {
     println("API URL: $apiUrl")
     println("Model: ${if (useNewAPI) responseModel else chatModel}")
 
-    val prompt = buildPrompt(context, question)
+    val prompt = buildPrompt(
+      userQuestion = question,
+      context = context,
+      mode = mode,
+    )
 
     return if (useNewAPI) {
       callNewResponsesAPI(prompt)
@@ -262,28 +274,6 @@ class LLMService {
     } catch (e: Exception) {
       println("Exception: ${e.message}")
       "Ошибка при обращении к Chat API: ${e.message}"
-    }
-  }
-
-  private fun buildPrompt(context: String, question: String): String {
-    return if (context.isNotEmpty()) {
-      """
-            |Контекст из базы знаний:
-            |$context
-            |
-            |Вопрос пользователя: $question
-            |
-            |Ответь на вопрос, используя ТОЛЬКО информацию из предоставленного контекста.
-            |Если в контексте нет информации для ответа, скажи, что информации недостаточно.
-            |Если в контексте есть ссылки, перейди по ним для получения дополнительной информации (исключение - ссылки на Google drive и Youtube).
-            """.trimMargin()
-    } else {
-      """
-            |В базе знаний не найдено информации.
-            |Вопрос: $question
-            |Объясни, что информации пока нет в базе, но сгенерируй четкий ответ без воды на основании информации из интернета.
-            |Не добавляй в ответ Call to action, только ответ на вопрос. У пользователя не будет возможности ответить обратно.
-            """.trimMargin()
     }
   }
 

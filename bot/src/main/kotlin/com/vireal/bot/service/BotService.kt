@@ -5,10 +5,8 @@ import com.vireal.shared.models.CreateNoteResponse
 import com.vireal.shared.models.Note
 import com.vireal.shared.models.QueryResponse
 import com.vireal.shared.models.SearchResult
-import org.slf4j.LoggerFactory
 
 class BotService(private val apiClient: ApiClient) {
-  private val logger = LoggerFactory.getLogger(this::class.java)
 
   suspend fun createNote(userId: Long, content: String): CreateNoteResponse {
     return apiClient.createNote(userId, content)
@@ -18,8 +16,12 @@ class BotService(private val apiClient: ApiClient) {
     return apiClient.searchNotes(userId, query, limit)
   }
 
-  suspend fun askQuestion(userId: Long, question: String): QueryResponse {
+  suspend fun askQuestionWithKnowledgeBaseContext(userId: Long, question: String): QueryResponse {
     return apiClient.askQuestion(userId, question)
+  }
+
+  suspend fun askQuestionWithNoKnowledgeBaseContext(userId: Long, question: String, context: String): QueryResponse {
+    return apiClient.askQuestionOutsideKnowledgeBase(userId = userId, question = question, context = context)
   }
 
   suspend fun getUserNotes(userId: Long, limit: Int = 10): List<Note> {

@@ -79,7 +79,7 @@ object CallbackHandlers {
             val text = state?.lastMessage
 
             if (text != null) {
-              val response = botService.askQuestion(userId, text)
+              val response = botService.askQuestionWithKnowledgeBaseContext(userId, text)
 
               query.message?.let {
                 editMessageText(

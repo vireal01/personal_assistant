@@ -142,6 +142,43 @@ class ApiClient(
     }
   }
 
+  suspend fun askQuestionOutsideKnowledgeBase(
+    userId: Long,
+    question: String,
+    context: String?,
+    useSemanticSearch: Boolean = true
+  ): QueryResponse {
+    return try {
+      val response = client.post("$baseUrl/api/queryLlm") {
+        contentType(ContentType.Application.Json)
+        setBody(
+          QueryRequest(
+            userId = userId,
+            question = question,
+            extraContext = context,
+            useSemanticSearch = useSemanticSearch
+          )
+        )
+      }
+
+      if (response.status.isSuccess()) {
+        response.body<QueryResponse>()
+      } else {
+        QueryResponse(
+          answer = "Не удалось получить ответ от сервера",
+          sources = emptyList()
+        )
+      }
+    } catch (e: Exception) {
+      logger.error("Error asking question", e)
+      QueryResponse(
+        answer = "Ошибка: ${e.message}",
+        sources = emptyList()
+      )
+    }
+  }
+
+
   suspend fun getUserNotes(userId: Long, limit: Int = 10): List<Note> {
     return try {
       val response = client.get("$baseUrl/api/notes/user/$userId") {
