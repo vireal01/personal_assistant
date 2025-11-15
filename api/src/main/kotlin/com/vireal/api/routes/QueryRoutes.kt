@@ -13,7 +13,21 @@ fun Route.queryRoutes() {
   route("/api/query") {
     post {
       val request = call.receive<QueryRequest>()
-      val response = queryService.processQuery(request.userId, request.question)
+      val response = queryService.processQuery(
+        userId = request.userId,
+        question = request.question,
+      )
+      call.respond(response)
+    }
+  }
+
+  route("/api/queryLlm") {
+    post {
+      val request = call.receive<QueryRequest>()
+      val response = queryService.processQueryOutsideKnowledgeBase(
+        context = request.extraContext ?: "",
+        question = request.question,
+        )
       call.respond(response)
     }
   }
