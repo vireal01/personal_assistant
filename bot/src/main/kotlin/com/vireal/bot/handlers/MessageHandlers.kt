@@ -54,8 +54,8 @@ object MessageHandlers {
     // Text with any media
     onTextedMediaContent { message ->
       when {
-        isHandledBatchOfForwardedMessages(message) -> return@onTextedMediaContent
         isReplyProcessed(message, botService) -> return@onTextedMediaContent
+        isHandledBatchOfForwardedMessages(message) -> return@onTextedMediaContent
         else -> handleSingleMessage(message = message, botService = botService)
       }
     }
@@ -67,8 +67,8 @@ object MessageHandlers {
     // Plain text
     onText { message ->
       when {
-        isHandledBatchOfForwardedMessages(message) -> return@onText
         isReplyProcessed(message, botService) -> return@onText
+        isHandledBatchOfForwardedMessages(message) -> return@onText
         message.content.text.startsWith("/") -> return@onText
         else -> handleSingleMessage(message = message, botService = botService)
       }
