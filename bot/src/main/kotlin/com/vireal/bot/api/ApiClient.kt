@@ -29,7 +29,7 @@ import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
 class ApiClient(
-  private val baseUrl: String = "http://api:8080"
+  val baseUrl: String = "http://api:8080"
 ) {
   private val logger = LoggerFactory.getLogger(this::class.java)
 

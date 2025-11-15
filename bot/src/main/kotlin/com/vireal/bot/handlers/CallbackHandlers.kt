@@ -79,14 +79,57 @@ object CallbackHandlers {
             val text = state?.lastMessage
 
             if (text != null) {
-              val response = botService.askQuestionWithKnowledgeBaseContext(userId, text)
+              answerCallbackQuery(query, "🤔 Поиск ответа...")
 
-              query.message?.let {
+              query.message?.let { message ->
                 editMessageText(
-                  it.chat,
-                  it.messageId,
-                  response.answer
+                  message.chat,
+                  message.messageId,
+                  "🤔 Поиск в базе знаний..."
                 )
+
+                try {
+                  val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, text)
+
+                  if (mcpResult.isError) {
+                    editMessageText(
+                      message.chat,
+                      message.messageId,
+                      "❌ Ошибка: ${mcpResult.content.firstOrNull()?.text ?: "Неизвестная ошибка"}"
+                    )
+                  } else {
+                    val content = mcpResult.content.firstOrNull()
+                    val answer = content?.text ?: "Не удалось получить ответ"
+                    val metadata = content?.metadata
+
+                    // Формируем расширенный ответ
+                    val responseText = buildString {
+                      append("❓ Ваш вопрос: $text\n\n")
+                      append("💡 Ответ:\n$answer")
+
+                      metadata?.let { meta ->
+                        val sourcesCount = meta["sources_count"]?.toString()?.toIntOrNull()
+                        val searchTime = meta["search_time_ms"]?.toString()?.toLongOrNull()
+
+                        if (sourcesCount != null && sourcesCount > 0) {
+                          append("\n\n📚 Использовано источников: $sourcesCount")
+                          if (searchTime != null) {
+                            append(" (поиск: ${searchTime}мс)")
+                          }
+                        }
+                      }
+                    }
+
+                    editMessageText(message.chat, message.messageId, responseText)
+                  }
+                } catch (e: Exception) {
+                  logger.error("Error processing question via callback", e)
+                  editMessageText(
+                    message.chat,
+                    message.messageId,
+                    "❌ Ошибка обработки вопроса"
+                  )
+                }
               }
 
               MessageHandlers.removeUserState(userId)
