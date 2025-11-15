@@ -39,7 +39,7 @@ private fun buildKnowledgeBasedPrompt(
             |Вопрос: $userQuestion
             |Объясни, что информации пока нет в базе, но сгенерируй четкий ответ без воды на основании информации из интернета.
             |${servicePrompt}
-            """.trimMargin().plus(servicePrompt)
+            """.trimMargin()
   }
 }
 
