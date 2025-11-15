@@ -128,7 +128,7 @@ class LLMService {
       level = LogLevel.INFO
     }
     install(HttpTimeout) {
-      requestTimeoutMillis = 30000
+      requestTimeoutMillis = 50000
       connectTimeoutMillis = 10000
     }
     defaultRequest {
