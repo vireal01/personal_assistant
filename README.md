@@ -5,12 +5,15 @@ A Kotlin-based REST API for managing personal notes and providing AI-powered que
 ## 🚀 Features
 
 - **Note Management**: Create, retrieve, and search through personal notes
-- **AI-Powered Queries**: Ask questions and get answers based on your stored knowledge
+- **MCP Architecture**: Model Context Protocol for unified AI interactions
+- **AI-Powered Queries**: Two modes - with and without knowledge base search
+- **Hybrid Search**: Vector + full-text search with intelligent ranking
+- **Vector Embeddings**: Semantic search using OpenAI embeddings
 - **Full-Text Search**: Advanced search capabilities across all notes
 - **User Isolation**: Each user's notes are kept separate
-- **RESTful API**: Clean and intuitive API endpoints
+- **RESTful API**: Clean and intuitive API endpoints with legacy compatibility
 - **Docker Support**: Easy deployment with Docker and Docker Compose
-- **PostgreSQL Database**: Robust data persistence with full-text search capabilities
+- **PostgreSQL Database**: Robust data persistence with vector and full-text search
 
 ## 🛠️ Tech Stack
 
@@ -71,14 +74,82 @@ The application will be available at `http://localhost:8080`
 http://localhost:8080
 ```
 
-### Endpoints
+### MCP API (Recommended)
+
+#### Query with Knowledge Base Search
+```http
+POST /api/mcp/query/with-context
+Content-Type: application/json
+
+{
+  "userId": 123,
+  "question": "How to setup Docker?",
+  "tags": ["docker", "setup"],
+  "category": "devops"
+}
+```
+
+#### Query without Knowledge Base Search
+```http
+POST /api/mcp/query/without-context
+Content-Type: application/json
+
+{
+  "question": "Explain this code",
+  "context": "function hello() { console.log('Hello World'); }"
+}
+```
+
+#### Get Available MCP Tools
+```http
+GET /api/mcp/tools
+```
+
+#### Execute MCP Tool
+```http
+POST /api/mcp/tools/execute
+Content-Type: application/json
+
+{
+  "name": "query_with_knowledge_base",
+  "arguments": {
+    "userId": 123,
+    "question": "Your question here"
+  }
+}
+```
+
+### Legacy API (Backward Compatible)
+
+#### Query with Knowledge Base
+```http
+POST /api/query
+Content-Type: application/json
+
+{
+  "userId": 123,
+  "question": "Your question here"
+}
+```
+
+#### Query without Knowledge Base
+```http
+POST /api/queryLlm
+Content-Type: application/json
+
+{
+  "question": "Your question here",
+  "extraContext": "Additional context"
+}
+```
+
+### Notes Management
 
 #### Health Check
 ```http
 GET /health
 ```
 
-#### Notes Management
 
 **Create a new note**
 ```http

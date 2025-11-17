@@ -16,6 +16,8 @@ import dev.inmo.tgbotapi.requests.abstracts.InputFile
 import dev.inmo.tgbotapi.types.message.MarkdownV2
 import dev.inmo.tgbotapi.utils.*
 import io.ktor.utils.io.core.ByteReadPacket
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 
@@ -44,6 +46,176 @@ object CommandHandlers {
         parseMode = MarkdownV2,
         replyMarkup = getMainKeyboard()
       )
+    }
+
+    // Команда /mcp - информация о MCP инструментах
+    onCommand("mcp") { message ->
+      val tempMsg = send(message.chat, "🔍 Получение информации о MCP инструментах...")
+
+      try {
+        val tools = botService.mcpClient.getAvailableTools()
+
+        val mcpInfo = buildString {
+          appendLine("🛠 **Доступные MCP инструменты:**")
+          appendLine()
+
+          tools.forEach { tool ->
+            appendLine("**${tool.name}**")
+            appendLine("📋 ${tool.description}")
+            appendLine()
+          }
+
+          if (tools.isEmpty()) {
+            appendLine("❌ Инструменты не найдены")
+          }
+        }
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          mcpInfo,
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error getting MCP tools info", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка получения информации о MCP инструментах"
+        )
+      }
+    }
+
+    // Команда /mcpquery - пример MCP запроса с детальной информацией
+    onCommand("mcpquery") { message ->
+      val args = message.content.text.substringAfter("/mcpquery").trim()
+
+      if (args.isEmpty()) {
+        send(
+          message.chat, """
+          📝 **Использование:** `/mcpquery ваш вопрос`
+
+          **Пример:** `/mcpquery Как настроить Docker?`
+
+          Эта команда покажет детальную информацию о MCP запросе, включая метаданные поиска.
+        """.trimIndent(), parseMode = MarkdownV2
+        )
+        return@onCommand
+      }
+
+      val userId = message.chat.id.chatId
+      val tempMsg = send(message.chat, "🤔 Выполнение MCP запроса...")
+
+      try {
+        val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, args)
+
+        val responseText = buildString {
+          appendLine("🔍 **MCP Query результат:**")
+          appendLine()
+          appendLine("**Вопрос:** $args")
+          appendLine()
+
+          if (mcpResult.isError) {
+            appendLine("❌ **Ошибка:** ${mcpResult.content.firstOrNull()?.text}")
+          } else {
+            val content = mcpResult.content.firstOrNull()
+            appendLine("💡 **Ответ:**")
+            appendLine(content?.text ?: "Нет ответа")
+            appendLine()
+
+            content?.metadata?.let { metadata ->
+              appendLine("📊 **Метаданные:**")
+              metadata["sources_count"]?.toString()?.let {
+                appendLine("• Источников найдено: $it")
+              }
+              metadata["search_time_ms"]?.toString()?.let {
+                appendLine("• Время поиска: ${it}мс")
+              }
+              metadata["total_found"]?.toString()?.let {
+                appendLine("• Всего найдено: $it")
+              }
+            }
+          }
+        }
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          responseText.escapeMarkdownV2(),
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error executing MCP query", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка выполнения MCP запроса"
+        )
+      }
+    }
+
+    // Команда /mcpraw - запрос без поиска в базе знаний
+    onCommand("mcpraw") { message ->
+      val args = message.content.text.substringAfter("/mcpraw").trim()
+
+      if (args.isEmpty()) {
+        send(
+          message.chat, """
+          📝 **Использование:** `/mcpraw ваш вопрос`
+
+          **Пример:** `/mcpraw Объясни что такое REST API`
+
+          Эта команда отправляет запрос напрямую к LLM без поиска в базе знаний.
+        """.trimIndent(), parseMode = MarkdownV2
+        )
+        return@onCommand
+      }
+
+      val tempMsg = send(message.chat, "🤔 Обработка запроса без поиска...")
+
+      try {
+        val mcpResult = botService.askQuestionWithoutKnowledgeBaseMCP(args)
+
+        val responseText = buildString {
+          appendLine("🚀 **MCP Raw Query результат:**")
+          appendLine()
+          appendLine("**Вопрос:** $args")
+          appendLine()
+
+          if (mcpResult.isError) {
+            appendLine("❌ **Ошибка:** ${mcpResult.content.firstOrNull()?.text}")
+          } else {
+            val content = mcpResult.content.firstOrNull()
+            appendLine("💡 **Ответ:**")
+            appendLine(content?.text ?: "Нет ответа")
+            appendLine()
+
+            content?.metadata?.let { metadata ->
+              appendLine("📊 **Метаданные:**")
+              metadata["context_provided"]?.toString()?.let {
+                appendLine("• Контекст предоставлен: $it")
+              }
+              metadata["context_length"]?.toString()?.let {
+                appendLine("• Длина контекста: $it символов")
+              }
+            }
+          }
+        }
+
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          responseText.escapeMarkdownV2(),
+          parseMode = MarkdownV2
+        )
+      } catch (e: Exception) {
+        logger.error("Error executing MCP raw query", e)
+        editMessageText(
+          message.chat,
+          tempMsg.messageId,
+          "❌ Ошибка выполнения запроса"
+        )
+      }
     }
 
     // Команда /help
@@ -196,19 +368,26 @@ object CommandHandlers {
       val tempMsg = send(message.chat, "🤔 Анализирую базу знаний...")
 
       try {
-        val response = botService.askQuestionWithKnowledgeBaseContext(userId, question)
+        val response = botService.askQuestionWithKnowledgeBaseMCP(userId, question)
 
         val answerText = buildString {
           appendLine("*Вопрос:* ${question.escapeMarkdownV2()}")
           appendLine()
           appendLine("*Ответ:*")
-          appendLine(response.answer.escapeMarkdownV2())
 
-          if (response.sources.isNotEmpty()) {
-            appendLine()
-            appendLine("*Источники:*")
-            response.sources.forEach { source ->
-              appendLine("• ${source.escapeMarkdownV2()}")
+          if (response.isError) {
+            appendLine(response.content.firstOrNull()?.text?.escapeMarkdownV2() ?: "Неизвестная ошибка")
+          } else {
+            appendLine(response.content.firstOrNull()?.text?.escapeMarkdownV2() ?: "Нет ответа")
+
+            response.content.firstOrNull()?.metadata?.get("sources")?.jsonArray?.let { sources ->
+              if (sources.isNotEmpty()) {
+                appendLine()
+                appendLine("*Источники:*")
+                sources.forEach { source ->
+                  appendLine("• ${source.jsonPrimitive.content.escapeMarkdownV2()}")
+                }
+              }
             }
           }
         }.trimIndent()

@@ -1,12 +1,19 @@
 package com.vireal.bot.service
 
 import com.vireal.bot.api.ApiClient
-import com.vireal.shared.models.CreateNoteResponse
-import com.vireal.shared.models.Note
-import com.vireal.shared.models.QueryResponse
-import com.vireal.shared.models.SearchResult
+import com.vireal.bot.mcp.MCPApiClient
+import com.vireal.shared.models.*
 
-class BotService(private val apiClient: ApiClient) {
+/**
+ * BotService с поддержкой MCP архитектуры
+ * Использует MCP для AI запросов и legacy API для управления заметками
+ */
+class BotService(
+  private val apiClient: ApiClient,
+  val mcpClient: MCPApiClient = MCPApiClient(apiClient.baseUrl)
+) {
+
+  // === Методы для управления заметками (без изменений) ===
 
   suspend fun createNote(userId: Long, content: String): CreateNoteResponse {
     return apiClient.createNote(userId, content)
@@ -16,13 +23,40 @@ class BotService(private val apiClient: ApiClient) {
     return apiClient.searchNotes(userId, query, limit)
   }
 
-  suspend fun askQuestionWithKnowledgeBaseContext(userId: Long, question: String): QueryResponse {
-    return apiClient.askQuestion(userId, question)
+  // === MCP методы для AI запросов ===
+
+  /**
+   * Запрос с поиском в базе знаний через MCP
+   */
+  suspend fun askQuestionWithKnowledgeBaseMCP(
+    userId: Long,
+    question: String,
+    tags: List<String> = emptyList(),
+    category: String? = null
+  ): MCPToolResult {
+    return mcpClient.queryWithKnowledgeBase(
+      userId = userId,
+      question = question,
+      tags = tags,
+      category = category
+    )
   }
 
-  suspend fun askQuestionWithNoKnowledgeBaseContext(userId: Long, question: String, context: String): QueryResponse {
-    return apiClient.askQuestionOutsideKnowledgeBase(userId = userId, question = question, context = context)
+  /**
+   * Запрос без поиска в базе знаний через MCP
+   */
+  suspend fun askQuestionWithoutKnowledgeBaseMCP(
+    question: String,
+    context: String = ""
+  ): MCPToolResult {
+    return mcpClient.queryWithoutKnowledgeBase(
+      question = question,
+      context = context
+    )
   }
+
+  // === Legacy методы для обратной совместимости ===
+
 
   suspend fun getUserNotes(userId: Long, limit: Int = 10): List<Note> {
     return apiClient.getUserNotes(userId, limit)

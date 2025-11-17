@@ -29,7 +29,7 @@ import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
 class ApiClient(
-  private val baseUrl: String = "http://api:8080"
+  val baseUrl: String = "http://api:8080"
 ) {
   private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -105,76 +105,6 @@ class ApiClient(
     } catch (e: Exception) {
       logger.error("Error searching notes", e)
       SearchResult(notes = emptyList(), totalFound = 0)
-    }
-  }
-
-  suspend fun askQuestion(
-    userId: Long,
-    question: String,
-    useSemanticSearch: Boolean = true
-  ): QueryResponse {
-    return try {
-      val response = client.post("$baseUrl/api/query") {
-        contentType(ContentType.Application.Json)
-        setBody(
-          QueryRequest(
-            userId = userId,
-            question = question,
-            useSemanticSearch = useSemanticSearch
-          )
-        )
-      }
-
-      if (response.status.isSuccess()) {
-        response.body<QueryResponse>()
-      } else {
-        QueryResponse(
-          answer = "Не удалось получить ответ от сервера",
-          sources = emptyList()
-        )
-      }
-    } catch (e: Exception) {
-      logger.error("Error asking question", e)
-      QueryResponse(
-        answer = "Ошибка: ${e.message}",
-        sources = emptyList()
-      )
-    }
-  }
-
-  suspend fun askQuestionOutsideKnowledgeBase(
-    userId: Long,
-    question: String,
-    context: String?,
-    useSemanticSearch: Boolean = true
-  ): QueryResponse {
-    return try {
-      val response = client.post("$baseUrl/api/queryLlm") {
-        contentType(ContentType.Application.Json)
-        setBody(
-          QueryRequest(
-            userId = userId,
-            question = question,
-            extraContext = context,
-            useSemanticSearch = useSemanticSearch
-          )
-        )
-      }
-
-      if (response.status.isSuccess()) {
-        response.body<QueryResponse>()
-      } else {
-        QueryResponse(
-          answer = "Не удалось получить ответ от сервера",
-          sources = emptyList()
-        )
-      }
-    } catch (e: Exception) {
-      logger.error("Error asking question", e)
-      QueryResponse(
-        answer = "Ошибка: ${e.message}",
-        sources = emptyList()
-      )
     }
   }
 
