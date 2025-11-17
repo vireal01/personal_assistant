@@ -57,15 +57,6 @@ class BotService(
 
   // === Legacy методы для обратной совместимости ===
 
-  suspend fun askQuestionWithKnowledgeBaseContext(userId: Long, question: String): QueryResponse {
-    val mcpResult = askQuestionWithKnowledgeBaseMCP(userId, question)
-    return mcpClient.convertToLegacyResponse(mcpResult)
-  }
-
-  suspend fun askQuestionWithNoKnowledgeBaseContext(userId: Long, question: String, context: String): QueryResponse {
-    val mcpResult = askQuestionWithoutKnowledgeBaseMCP(question, context)
-    return mcpClient.convertToLegacyResponse(mcpResult)
-  }
 
   suspend fun getUserNotes(userId: Long, limit: Int = 10): List<Note> {
     return apiClient.getUserNotes(userId, limit)

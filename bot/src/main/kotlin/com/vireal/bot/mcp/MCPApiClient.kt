@@ -197,31 +197,6 @@ class MCPApiClient(
     )
   }
 
-  /**
-   * Конвертировать MCP результат в legacy QueryResponse
-   */
-  fun convertToLegacyResponse(mcpResult: MCPToolResult): QueryResponse {
-    if (mcpResult.isError) {
-      return QueryResponse(
-        answer = mcpResult.content.firstOrNull()?.text ?: "Произошла ошибка",
-        sources = emptyList()
-      )
-    }
-
-    val content = mcpResult.content.firstOrNull()
-    val metadata = content?.metadata
-
-    return QueryResponse(
-      answer = content?.text ?: "Не удалось получить ответ",
-      sources = metadata?.get("sources")?.jsonArray?.mapNotNull {
-        it.jsonPrimitive.contentOrNull
-      } ?: emptyList()
-    )
-  }
-
-  /**
-   * Закрыть HTTP клиент
-   */
   fun close() {
     client.close()
   }

@@ -126,35 +126,6 @@ internal suspend fun BehaviourContext.handleQuestionLLM(
   }
 }
 
-/**
- * Legacy метод для обратной совместимости
- */
-internal suspend fun BehaviourContext.handleQuestionKnowledgeBaseLegacy(
-  message: CommonMessage<TextedContent>,
-  question: String,
-  botService: BotService
-) {
-  val userId = message.chat.id.chatId
-  val tempMsg = send(message.chat, "🤔 Анализирую...")
-
-  try {
-    val response = botService.askQuestionWithKnowledgeBaseContext(userId, question)
-    editMessageText(
-      message.chat,
-      tempMsg.messageId,
-      response.answer
-    )
-  } catch (e: Exception) {
-    logger.error("Error processing question", e)
-    editMessageText(
-      message.chat,
-      tempMsg.messageId,
-      "❌ Ошибка обработки вопроса"
-    )
-  }
-}
-
-
 private suspend fun BehaviourContext.handleMyNotes(
   message: CommonMessage<TextContent>,
   botService: BotService

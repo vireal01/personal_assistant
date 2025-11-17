@@ -16,6 +16,8 @@ import dev.inmo.tgbotapi.requests.abstracts.InputFile
 import dev.inmo.tgbotapi.types.message.MarkdownV2
 import dev.inmo.tgbotapi.utils.*
 import io.ktor.utils.io.core.ByteReadPacket
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 
@@ -366,19 +368,26 @@ object CommandHandlers {
       val tempMsg = send(message.chat, "🤔 Анализирую базу знаний...")
 
       try {
-        val response = botService.askQuestionWithKnowledgeBaseContext(userId, question)
+        val response = botService.askQuestionWithKnowledgeBaseMCP(userId, question)
 
         val answerText = buildString {
           appendLine("*Вопрос:* ${question.escapeMarkdownV2()}")
           appendLine()
           appendLine("*Ответ:*")
-          appendLine(response.answer.escapeMarkdownV2())
 
-          if (response.sources.isNotEmpty()) {
-            appendLine()
-            appendLine("*Источники:*")
-            response.sources.forEach { source ->
-              appendLine("• ${source.escapeMarkdownV2()}")
+          if (response.isError) {
+            appendLine(response.content.firstOrNull()?.text?.escapeMarkdownV2() ?: "Неизвестная ошибка")
+          } else {
+            appendLine(response.content.firstOrNull()?.text?.escapeMarkdownV2() ?: "Нет ответа")
+
+            response.content.firstOrNull()?.metadata?.get("sources")?.jsonArray?.let { sources ->
+              if (sources.isNotEmpty()) {
+                appendLine()
+                appendLine("*Источники:*")
+                sources.forEach { source ->
+                  appendLine("• ${source.jsonPrimitive.content.escapeMarkdownV2()}")
+                }
+              }
             }
           }
         }.trimIndent()
