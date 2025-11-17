@@ -21,6 +21,8 @@ class MCPService(
   companion object {
     const val TOOL_QUERY_WITH_CONTEXT = "query_with_knowledge_base"
     const val TOOL_QUERY_WITHOUT_CONTEXT = "query_without_context"
+
+    private val AVAILABLE_TOOLS = setOf(TOOL_QUERY_WITH_CONTEXT, TOOL_QUERY_WITHOUT_CONTEXT)
   }
 
   /**
@@ -87,25 +89,19 @@ class MCPService(
    * Выполнить инструмент MCP
    */
   suspend fun executeTool(request: MCPToolRequest): MCPToolResult {
+    require(request.name in AVAILABLE_TOOLS) { "Неизвестный инструмент: ${request.name}" }
+
     return try {
       when (request.name) {
         TOOL_QUERY_WITH_CONTEXT -> executeQueryWithKnowledgeBase(request.arguments)
         TOOL_QUERY_WITHOUT_CONTEXT -> executeQueryWithoutContext(request.arguments)
-        else -> MCPToolResult(
-          content = listOf(MCPContent("text", "Неизвестный инструмент: ${request.name}")),
-          isError = true
-        )
+        else -> throw IllegalStateException("Достигнут недостижимый код для инструмента: ${request.name}")
       }
+    } catch (e: IllegalArgumentException) {
+      createErrorResult("Ошибка в параметрах запроса: ${e.message}")
     } catch (e: Exception) {
-      MCPToolResult(
-        content = listOf(
-          MCPContent(
-            type = "text",
-            text = "Ошибка выполнения инструмента: ${e.message}"
-          )
-        ),
-        isError = true
-      )
+      // TODO: Добавить логирование ошибки e
+      createErrorResult("Внутренняя ошибка сервера при выполнении инструмента.")
     }
   }
 
@@ -114,10 +110,10 @@ class MCPService(
    */
   private suspend fun executeQueryWithKnowledgeBase(arguments: Map<String, JsonElement>): MCPToolResult {
     val userId = arguments["userId"]?.jsonPrimitive?.longOrNull
-      ?: return createErrorResult("Не указан userId")
+      ?: throw IllegalArgumentException("Параметр 'userId' отсутствует или имеет неверный формат")
 
     val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: return createErrorResult("Не указан question")
+      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
 
     val tags = arguments["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
     val category = arguments["category"]?.jsonPrimitive?.contentOrNull
@@ -169,7 +165,7 @@ class MCPService(
    */
   private suspend fun executeQueryWithoutContext(arguments: Map<String, JsonElement>): MCPToolResult {
     val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: return createErrorResult("Не указан question")
+      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
 
     val context = arguments["context"]?.jsonPrimitive?.contentOrNull ?: ""
 

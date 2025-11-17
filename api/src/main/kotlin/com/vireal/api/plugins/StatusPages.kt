@@ -11,18 +11,21 @@ data class ErrorResponse(val error: String, val message: String)
 
 fun Application.configureStatusPages() {
   install(StatusPages) {
-    exception<Throwable> { call, cause ->
-      call.application.environment.log.error("Unhandled exception", cause)
+    // Перехватываем ошибки валидации аргументов (400 Bad Request)
+    exception<IllegalArgumentException> { call, cause ->
       call.respond(
-        HttpStatusCode.InternalServerError,
-        ErrorResponse("internal_error", cause.localizedMessage ?: "Unknown error")
+        status = HttpStatusCode.BadRequest,
+        message = mapOf("error" to (cause.message ?: "Некорректный запрос"))
       )
     }
 
-    exception<IllegalArgumentException> { call, cause ->
+    // Общая обработка остальных ошибок (500 Internal Server Error)
+    exception<Throwable> { call, cause ->
+      // Важно логировать ошибку на сервере для последующего анализа
+      call.application.environment.log.error("Unhandled exception", cause)
       call.respond(
-        HttpStatusCode.BadRequest,
-        ErrorResponse("bad_request", cause.message ?: "Invalid request")
+        status = HttpStatusCode.InternalServerError,
+        message = mapOf("error" to "Внутренняя ошибка сервера")
       )
     }
   }
