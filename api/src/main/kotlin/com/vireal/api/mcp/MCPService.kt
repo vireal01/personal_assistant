@@ -1,221 +1,131 @@
 package com.vireal.api.mcp
 
-import com.vireal.api.data.repository.NotesRepository
-import com.vireal.api.data.repository.VectorSearchRepository
-import com.vireal.api.services.*
-import com.vireal.shared.models.*
+import com.vireal.api.services.EmbeddingService
+import com.vireal.api.services.HybridSearchService
+import com.vireal.api.services.LLMService
+import com.vireal.shared.models.MCPContent
+import com.vireal.shared.models.MCPToolResult
+import com.vireal.shared.models.Note
 import kotlinx.serialization.json.*
+import java.time.LocalDateTime
 
 /**
- * MCP сервис, предоставляющий инструменты для работы с базой знаний
+ * MCP сервис, который использует LLM для выбора и вызова инструментов.
  */
 class MCPService(
-  private val notesRepository: NotesRepository = NotesRepository(),
-  private val vectorRepository: VectorSearchRepository = VectorSearchRepository(),
-  private val embeddingService: EmbeddingService = EmbeddingService(),
-  private val llmService: LLMService = LLMService(),
-  private val hybridSearchService: HybridSearchService = HybridSearchService(),
-  private val tagService: TagExtractionService = TagExtractionService()
+    private val llmService: LLMService = LLMService(),
+    private val hybridSearchService: HybridSearchService = HybridSearchService(),
+    private val embeddingService: EmbeddingService = EmbeddingService()
+    // private val reminderService: ReminderService = ReminderService() // Будет добавлено в будущем
 ) {
+    private val toolRegistry = ToolRegistry(llmService)
+    private val json = Json { ignoreUnknownKeys = true }
 
-  companion object {
-    const val TOOL_QUERY_WITH_CONTEXT = "query_with_knowledge_base"
-    const val TOOL_QUERY_WITHOUT_CONTEXT = "query_without_context"
+    /**
+     * Главный метод, который обрабатывает запрос пользователя, позволяя LLM выбрать инструмент.
+     */
+    suspend fun processUserQuery(query: String, userId: Long): MCPToolResult {
+        val llmDecision = llmService.decideToolOrGenerateAnswer(query, toolRegistry.allTools)
 
-    private val AVAILABLE_TOOLS = setOf(TOOL_QUERY_WITH_CONTEXT, TOOL_QUERY_WITHOUT_CONTEXT)
-  }
-
-  /**
-   * Получить список доступных инструментов
-   */
-  fun getAvailableTools(): List<MCPTool> {
-    return listOf(
-      MCPTool(
-        name = TOOL_QUERY_WITH_CONTEXT,
-        description = "Выполняет поиск в базе знаний и генерирует ответ на основе найденного контекста",
-        inputSchema = buildJsonObject {
-          put("type", "object")
-          put("properties", buildJsonObject {
-            put("userId", buildJsonObject {
-              put("type", "integer")
-              put("description", "ID пользователя")
-            })
-            put("question", buildJsonObject {
-              put("type", "string")
-              put("description", "Вопрос пользователя")
-            })
-            put("tags", buildJsonObject {
-              put("type", "array")
-              put("items", buildJsonObject {
-                put("type", "string")
-              })
-              put("description", "Опциональные теги для фильтрации")
-            })
-            put("category", buildJsonObject {
-              put("type", "string")
-              put("description", "Опциональная категория для фильтрации")
-            })
-          })
-          put("required", buildJsonArray {
-            add("userId")
-            add("question")
-          })
+        if (llmDecision == null) {
+            return createErrorResult("Не удалось получить решение от LLM.")
         }
-      ),
-      MCPTool(
-        name = TOOL_QUERY_WITHOUT_CONTEXT,
-        description = "Генерирует ответ на вопрос без поиска в базе знаний, используя только предоставленный контекст",
-        inputSchema = buildJsonObject {
-          put("type", "object")
-          put("properties", buildJsonObject {
-            put("question", buildJsonObject {
-              put("type", "string")
-              put("description", "Вопрос пользователя")
-            })
-            put("context", buildJsonObject {
-              put("type", "string")
-              put("description", "Дополнительный контекст для ответа")
-            })
-          })
-          put("required", buildJsonArray {
-            add("question")
-          })
+
+        // Если LLM решил вызвать инструмент
+        if (llmDecision.tool_calls != null) {
+            val toolCall = llmDecision.tool_calls.first()
+            val arguments = json.decodeFromString<JsonObject>(toolCall.function.arguments)
+
+            return when (toolCall.function.name) {
+                "query_with_knowledge_base" -> {
+                    val question = arguments["question"]?.jsonPrimitive?.content ?: query
+                    executeQueryWithKnowledgeBase(question, userId)
+                }
+                "create_reminder" -> {
+                    val description = arguments["description"]?.jsonPrimitive?.content
+                    val datetime = arguments["datetime"]?.jsonPrimitive?.content
+                    createReminder(description, datetime, userId)
+                }
+                else -> createErrorResult("LLM предложил неизвестный инструмент: ${toolCall.function.name}")
+            }
         }
-      )
-    )
-  }
 
-  /**
-   * Выполнить инструмент MCP
-   */
-  suspend fun executeTool(request: MCPToolRequest): MCPToolResult {
-    require(request.name in AVAILABLE_TOOLS) { "Неизвестный инструмент: ${request.name}" }
+        // Если LLM просто ответил текстом
+        if (llmDecision.content != null) {
+            return MCPToolResult(content = listOf(MCPContent(type = "text", text = llmDecision.content)))
+        }
 
-    return try {
-      when (request.name) {
-        TOOL_QUERY_WITH_CONTEXT -> executeQueryWithKnowledgeBase(request.arguments)
-        TOOL_QUERY_WITHOUT_CONTEXT -> executeQueryWithoutContext(request.arguments)
-        else -> throw IllegalStateException("Достигнут недостижимый код для инструмента: ${request.name}")
-      }
-    } catch (e: IllegalArgumentException) {
-      createErrorResult("Ошибка в параметрах запроса: ${e.message}")
-    } catch (e: Exception) {
-      // TODO: Добавить логирование ошибки e
-      createErrorResult("Внутренняя ошибка сервера при выполнении инструмента.")
-    }
-  }
-
-  /**
-   * Выполнить запрос с поиском в базе знаний
-   */
-  private suspend fun executeQueryWithKnowledgeBase(arguments: Map<String, JsonElement>): MCPToolResult {
-    val userId = arguments["userId"]?.jsonPrimitive?.longOrNull
-      ?: throw IllegalArgumentException("Параметр 'userId' отсутствует или имеет неверный формат")
-
-    val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
-
-    val tags = arguments["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
-    val category = arguments["category"]?.jsonPrimitive?.contentOrNull
-
-    // Измеряем время поиска
-    val startTime = System.currentTimeMillis()
-
-    // Выполняем поиск с помощью HybridSearchService
-    val searchResult = hybridSearchService.search(
-      userId = userId,
-      query = question,
-      limit = 10
-    )
-
-    val searchTimeMs = System.currentTimeMillis() - startTime
-
-    // Формируем контекст из найденных записей
-    val context = buildContext(searchResult.notes, question)
-
-    // Генерируем ответ
-    val answer = if (context.isNotEmpty()) {
-      llmService.generateAnswerKnowledgeBase(context, question)
-    } else {
-      "В базе знаний не найдено информации по вашему вопросу."
+        return createErrorResult("Не удалось обработать ответ LLM.")
     }
 
-    return MCPToolResult(
-      content = listOf(
-        MCPContent(
-          type = "text",
-          text = answer,
-          metadata = mapOf(
-            "sources_count" to JsonPrimitive(searchResult.notes.size),
-            "search_time_ms" to JsonPrimitive(searchTimeMs),
-            "total_found" to JsonPrimitive(searchResult.totalFound),
-            "sources" to JsonArray(
-              searchResult.notes.take(3).map { note ->
-                JsonPrimitive("${note.content.take(100)}...")
-              }
+    /**
+     * Выполняет поиск в базе знаний.
+     */
+    private suspend fun executeQueryWithKnowledgeBase(question: String, userId: Long): MCPToolResult {
+        val searchResult = hybridSearchService.search(userId = userId, query = question, limit = 10)
+        val context = buildContext(searchResult.notes)
+
+        // Здесь можно сделать второй вызов LLM для генерации ответа на основе найденного контекста,
+        // но для простоты пока вернем сырой результат.
+        val answer = if (context.isNotEmpty()) {
+            llmService.generateAnswerKnowledgeBase(context, question)
+        } else {
+            "В базе знаний не найдено релевантной информации по вашему вопросу."
+        }
+
+        return MCPToolResult(
+            content = listOf(
+                MCPContent(
+                    type = "text",
+                    text = answer,
+                    metadata = mapOf(
+                        "sources_count" to JsonPrimitive(searchResult.notes.size),
+                        "total_found" to JsonPrimitive(searchResult.totalFound)
+                    )
+                )
             )
-          )
         )
-      )
-    )
-  }
-
-  /**
-   * Выполнить запрос без поиска в базе знаний
-   */
-  private suspend fun executeQueryWithoutContext(arguments: Map<String, JsonElement>): MCPToolResult {
-    val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
-
-    val context = arguments["context"]?.jsonPrimitive?.contentOrNull ?: ""
-
-    // Генерируем ответ без поиска в базе
-    val answer = llmService.generateAnswerRaw(context, question)
-
-    return MCPToolResult(
-      content = listOf(
-        MCPContent(
-          type = "text",
-          text = answer,
-          metadata = mapOf(
-            "context_provided" to JsonPrimitive(context.isNotEmpty()),
-            "context_length" to JsonPrimitive(context.length)
-          )
-        )
-      )
-    )
-  }
-
-  /**
-   * Формирует контекст для LLM из найденных записей
-   */
-  private fun buildContext(notes: List<Note>, question: String): String {
-    if (notes.isEmpty()) return ""
-
-    val contextBuilder = StringBuilder()
-    contextBuilder.append("Контекст из базы знаний:\n\n")
-
-    notes.forEachIndexed { index, note ->
-      contextBuilder.append("${index + 1}. ${note.content}")
-      if (note.tags.isNotEmpty()) {
-        contextBuilder.append("\nТеги: ${note.tags.joinToString(", ")}")
-      }
-      if (note.category != null) {
-        contextBuilder.append("\nКатегория: ${note.category}")
-      }
-      contextBuilder.append("\n\n")
     }
 
-    return contextBuilder.toString()
-  }
+    /**
+     * ЗАГЛУШКА: Создает напоминание.
+     */
+    private fun createReminder(description: String?, datetime: String?, userId: Long): MCPToolResult {
+        if (description == null || datetime == null) {
+            return createErrorResult("LLM не смог извлечь описание или дату для напоминания.")
+        }
 
-  /**
-   * Создать результат с ошибкой
-   */
-  private fun createErrorResult(message: String): MCPToolResult {
-    return MCPToolResult(
-      content = listOf(MCPContent("text", message)),
-      isError = true
-    )
-  }
+        // --- Начало ЗАГЛУШКИ ---
+        // В будущем здесь будет реальная логика:
+        // 1. Парсинг `datetime` в LocalDateTime.
+        // 2. Сохранение в `reminderService`.
+        // 3. Возврат подтверждения.
+        println("ЗАГЛУШКА: Создание напоминания для userId=$userId. Описание: '$description', Время: '$datetime'")
+        val parsedTime = try { LocalDateTime.parse(datetime) } catch (e: Exception) { null }
+        val confirmationText = if (parsedTime != null) {
+            "Хорошо, я напомню вам '$description' в $parsedTime."
+        } else {
+            "Напоминание для '$description' создано, но не удалось распознать время."
+        }
+        // --- Конец ЗАГЛУШКИ ---
+
+        return MCPToolResult(
+            content = listOf(
+                MCPContent(
+                    type = "text",
+                    text = confirmationText
+                )
+            )
+        )
+    }
+
+    private fun buildContext(notes: List<Note>): String {
+        return notes.joinToString("\n---\n") { it.content }
+    }
+
+    private fun createErrorResult(message: String): MCPToolResult {
+        return MCPToolResult(content = listOf(MCPContent("text", message)), isError = true)
+    }
 }
+
+

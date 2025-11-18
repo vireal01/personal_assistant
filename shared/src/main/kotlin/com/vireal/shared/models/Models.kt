@@ -148,6 +148,45 @@ data class MCPQueryWithContextRequest(
 
 @Serializable
 data class MCPQueryWithoutContextRequest(
-  val question: String,
-  val context: String = ""
+    val question: String,
+    val context: String = ""
+)
+
+// ===== OpenAI Tool Calling Models =====
+
+@Serializable
+data class Tool(
+    val type: String = "function",
+    val function: FunctionTool
+)
+
+@Serializable
+data class FunctionTool(
+    val name: String,
+    val description: String,
+    val parameters: JsonObject
+)
+
+@Serializable
+data class ToolChoice(
+    val type: String = "function",
+    val function: FunctionChoice
+)
+
+@Serializable
+data class FunctionChoice(
+    val name: String
+)
+
+@Serializable
+data class ToolCall(
+    val id: String,
+    val type: String,
+    val function: FunctionCall
+)
+
+@Serializable
+data class FunctionCall(
+    val name: String,
+    val arguments: String // Аргументы приходят как строка JSON
 )
