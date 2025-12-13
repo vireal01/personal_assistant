@@ -1,6 +1,8 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
+import com.vireal.bot.utils.CallbackState
+import com.vireal.bot.utils.mapWaitingStateToMCPType
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.*
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
@@ -21,7 +23,7 @@ object CallbackHandlers {
 
       try {
         when {
-          data == "save_note" -> {
+          data == CallbackState.SAVE_NOTE.name -> {
             val state = MessageHandlers.getUserState(userId)
             val text = state?.lastMessage
 
@@ -45,7 +47,7 @@ object CallbackHandlers {
             }
           }
 
-          data == "search_text" -> {
+          data == CallbackState.SEARCH_TEXT.name -> {
             val state = MessageHandlers.getUserState(userId)
             val text = state?.lastMessage
 
@@ -74,7 +76,50 @@ object CallbackHandlers {
             }
           }
 
-          data == "ask_question" -> {
+          data == CallbackState.CONFIRM_ACTION.name -> {
+            answerCallbackQuery(query, "✅ Действие подтверждено")
+            val state = MessageHandlers.getUserState(userId)
+            val text = state?.lastMessage
+            val waitingState = state?.waitingFor
+            if (waitingState == null || text == null) {
+              query.message?.let {
+                editMessageText(
+                  it.chat,
+                  it.messageId,
+                  "❌ Ошибка: нет ожидаемого действия"
+                )
+              }
+              return@onDataCallbackQuery
+            }
+            val mcpRequest = botService.mcpClient.createToolRequest(
+              type = mapWaitingStateToMCPType(waitingState),
+              userId = userId,
+              question = text,
+            )
+            botService.mcpClient.executeTool(mcpRequest)
+
+            query.message?.let {
+              editMessageText(
+                it.chat,
+                it.messageId,
+                "✅ Действие подтверждено"
+              )
+            }
+          }
+
+          data == CallbackState.DECLINE_ACTION.name -> {
+            answerCallbackQuery(query, "❌ Действие отклонено")
+            query.message?.let {
+              editMessageText(
+                it.chat,
+                it.messageId,
+                "❌ Действие отклонено"
+              )
+            }
+            MessageHandlers.removeUserState(userId)
+          }
+
+          data == CallbackState.ASK_QUESTION.name -> {
             val state = MessageHandlers.getUserState(userId)
             val text = state?.lastMessage
 
@@ -206,14 +251,14 @@ object CallbackHandlers {
             }
           }
 
-          data == "cancel_delete" -> {
+          data == CallbackState.CANCEL_DELETE.name -> {
             answerCallbackQuery(query, "Отменено")
             query.message?.let {
               deleteMessage(it.chat, it.messageId)
             }
           }
 
-          data == "cancel" -> {
+          data == CallbackState.CANCEL_ACTION.name -> {
             answerCallbackQuery(query, "Отменено")
             query.message?.let {
               deleteMessage(it.chat, it.messageId)

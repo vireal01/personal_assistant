@@ -1,6 +1,9 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
+import com.vireal.bot.utils.BotWaitingState
+import com.vireal.bot.utils.CallbackState
+import com.vireal.shared.models.MCPType
 import dev.inmo.kslog.common.error
 import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
@@ -17,6 +20,7 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.extensions.utils.uRLTextSourceOrNull
 import dev.inmo.tgbotapi.types.ReplyInfo
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
+import dev.inmo.tgbotapi.types.chat.Bot
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
 import dev.inmo.tgbotapi.types.message.textsources.link
@@ -32,14 +36,8 @@ object MessageHandlers {
 
   data class UserState(
     var lastMessage: String? = null,
-    var waitingFor: WaitingState? = null
+    var waitingFor: BotWaitingState? = BotWaitingState.UNSPECIFIED_YET
   )
-
-  enum class WaitingState {
-    NOTE_TEXT,
-    SEARCH_QUERY,
-    QUESTION
-  }
 
   private data class ForwardBatch(
     val messages: MutableList<CommonMessage<TextedContent>>
@@ -83,7 +81,7 @@ object MessageHandlers {
     when (val text = message.content.text) {
       "📝 Добавить заметку" -> {
         send(message.chat, "Отправьте текст заметки:")
-        userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
+        userStates[userId] = UserState(waitingFor = BotWaitingState.NOTE_TEXT)
       }
 
 //        "🔍 Поиск" -> {
@@ -93,7 +91,7 @@ object MessageHandlers {
 
       "❓ Задать вопрос" -> {
         send(message.chat, "Задайте ваш вопрос:")
-        userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
+        userStates[userId] = UserState(waitingFor = BotWaitingState.QUESTION)
       }
 
 //        "📚 Мои заметки" -> {
@@ -113,29 +111,38 @@ object MessageHandlers {
         val state = userStates[userId]
 
         when (state?.waitingFor) {
-          WaitingState.NOTE_TEXT -> {
+
+          BotWaitingState.NOTE_TEXT -> {
             handleAddNote(message, formatedText, botService)
             userStates.remove(userId)
           }
 
-          WaitingState.SEARCH_QUERY -> {
+          BotWaitingState.SEARCH_QUERY -> {
             handleSearch(message, formatedText, botService)
             userStates.remove(userId)
           }
 
-          WaitingState.QUESTION -> {
+          BotWaitingState.QUESTION -> {
             handleQuestionKnowledgeBase(message, formatedText, botService)
             userStates.remove(userId)
           }
 
-          else -> {
+          BotWaitingState.UNSPECIFIED_YET -> {
             userStates[userId] = UserState(lastMessage = text)
 
             send(
               message.chat,
               "Что сделать с этим текстом?",
-              replyMarkup = createActionKeyboard()
+              replyMarkup = createChooseActionKeyboard()
             )
+          }
+
+          BotWaitingState.SET_REMINDER_TIME -> {
+            // TODO: implement reminder creation flow
+          }
+
+          null -> {
+            handleDecideToolToUse(message, formatedText, botService)
           }
         }
       }
@@ -230,6 +237,69 @@ object MessageHandlers {
     }
   }
 
+  private suspend fun BehaviourContext.handleDecideToolToUse(
+    message: CommonMessage<TextedContent>,
+    formatedText: String,
+    botService: BotService,
+  ) {
+    val tempMsg = send(message.chat, "🤖 Определяем, что делать с вашим сообщением...")
+
+    try {
+      val result = botService.decideMCPToolToUse(formatedText)
+      val userId = message.chat.id.chatId
+
+      when (result.type) {
+        MCPType.UNCATEGORIZED -> {
+          val resultText =
+            "🤖 Мы не смогли автоматически определить, что с этим сделать. Пожалуйста, выберите действие ниже."
+          editMessageText(
+            chat = message.chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createChooseActionKeyboard()
+          )
+        }
+
+        MCPType.KNOWLEDGE_BASE_QUERY -> {
+          val resultText = "Вы хотите сделать запрос к базе знаний по вашему сообщению?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.QUESTION)
+          editMessageText(
+            chat = message.chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+
+        MCPType.NOTE_SAVING -> {
+          val resultText = "Вы хотите сохранить ваше сообщение как заметку?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.NOTE_TEXT)
+          editMessageText(
+            chat = message.chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+
+        MCPType.REMINDER_CREATION -> {
+          val resultText = "Вы хотите установить напоминание на основе вашего сообщения?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.SET_REMINDER_TIME)
+          editMessageText(
+            chat = message.chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+      }
+
+    } catch (e: Exception) {
+      logger.error("Error MCP deciding", e)
+      editMessageText(message.chat, tempMsg.messageId, "❌ Ошибка обработки")
+    }
+  }
+
   fun getUserState(userId: Long): UserState? = userStates[userId]
   fun removeUserState(userId: Long) = userStates.remove(userId)
   fun setUserState(userId: Long, state: UserState) {
@@ -237,13 +307,24 @@ object MessageHandlers {
   }
 }
 
-private fun createActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
+
+private fun createChooseActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
   row {
-    dataButton("📝 Сохранить заметку", "save_note")
-    dataButton("❓ Задать вопрос", "ask_question")
+    dataButton("📝 Сохранить заметку", CallbackState.SAVE_NOTE.name)
+    dataButton("❓ Задать вопрос", CallbackState.ASK_QUESTION.name)
   }
   row {
-    dataButton("❌ Отмена", "cancel")
+    dataButton("❌ Отмена", CallbackState.CANCEL_ACTION.name)
+  }
+}
+
+private fun createConfirmActionCategoryChooseKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
+  row {
+    dataButton(text = "👍", data = CallbackState.CONFIRM_ACTION.name)
+    dataButton(text = "👎", CallbackState.DECLINE_ACTION.name)
+  }
+  row {
+    dataButton("❌ Отмена", CallbackState.CANCEL_ACTION.name)
   }
 }
 
@@ -270,7 +351,7 @@ private suspend fun BehaviourContext.processForwardBatch(
     send(
       chat,
       messageText,
-      replyMarkup = createActionKeyboard()
+      replyMarkup = createChooseActionKeyboard()
     )
   } catch (e: Exception) {
     logger.error(e)

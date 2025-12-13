@@ -13,7 +13,7 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.replyKeyboard
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.simpleButton
 import dev.inmo.tgbotapi.requests.abstracts.InputFile
-import dev.inmo.tgbotapi.types.message.MarkdownV2
+import dev.inmo.tgbotapi.types.message.MarkdownParseMode
 import dev.inmo.tgbotapi.utils.*
 import io.ktor.utils.io.core.ByteReadPacket
 import kotlinx.serialization.json.jsonArray
@@ -43,7 +43,7 @@ object CommandHandlers {
       send(
         message.chat,
         welcomeMessage,
-        parseMode = MarkdownV2,
+        parseMode = MarkdownParseMode,
         replyMarkup = getMainKeyboard()
       )
     }
@@ -68,13 +68,13 @@ object CommandHandlers {
           if (tools.isEmpty()) {
             appendLine("❌ Инструменты не найдены")
           }
-        }
+        }.escapeMarkdownV2()
 
         editMessageText(
           message.chat,
           tempMsg.messageId,
           mcpInfo,
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error getting MCP tools info", e)
@@ -98,7 +98,7 @@ object CommandHandlers {
           **Пример:** `/mcpquery Как настроить Docker?`
 
           Эта команда покажет детальную информацию о MCP запросе, включая метаданные поиска.
-        """.trimIndent(), parseMode = MarkdownV2
+        """.trimIndent(), parseMode = MarkdownParseMode
         )
         return@onCommand
       }
@@ -136,13 +136,13 @@ object CommandHandlers {
               }
             }
           }
-        }
+        }.escapeMarkdownV2()
 
         editMessageText(
           message.chat,
           tempMsg.messageId,
           responseText.escapeMarkdownV2(),
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error executing MCP query", e)
@@ -166,7 +166,7 @@ object CommandHandlers {
           **Пример:** `/mcpraw Объясни что такое REST API`
 
           Эта команда отправляет запрос напрямую к LLM без поиска в базе знаний.
-        """.trimIndent(), parseMode = MarkdownV2
+        """.trimIndent(), parseMode = MarkdownParseMode
         )
         return@onCommand
       }
@@ -200,13 +200,13 @@ object CommandHandlers {
               }
             }
           }
-        }
+        }.escapeMarkdownV2()
 
         editMessageText(
           message.chat,
           tempMsg.messageId,
           responseText.escapeMarkdownV2(),
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error executing MCP raw query", e)
@@ -246,7 +246,7 @@ object CommandHandlers {
                 💡 *Совет:* Используйте \#хештеги для категоризации\!
             """.trimIndent()
 
-      send(message.chat, helpMessage, parseMode = MarkdownV2)
+      send(message.chat, helpMessage, parseMode = MarkdownParseMode)
     }
 
     // Команда /add
@@ -276,7 +276,7 @@ object CommandHandlers {
             message.chat,
             tempMsg.messageId,
             successMsg,
-            parseMode = MarkdownV2,
+            parseMode = MarkdownParseMode,
             replyMarkup = inlineKeyboard {
               row {
                 dataButton("🔍 Найти похожие", "similar:${response.noteId}")
@@ -320,7 +320,7 @@ object CommandHandlers {
             message.chat,
             tempMsg.messageId,
             "Не найдено заметок по запросу: *$query*",
-            parseMode = MarkdownV2
+            parseMode = MarkdownParseMode
           )
           return@onCommand
         }
@@ -343,7 +343,7 @@ object CommandHandlers {
           message.chat,
           tempMsg.messageId,
           resultText,
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error searching", e)
@@ -396,7 +396,7 @@ object CommandHandlers {
           message.chat,
           tempMsg.messageId,
           answerText,
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error processing question", e)
@@ -437,7 +437,7 @@ object CommandHandlers {
         send(
           message.chat,
           notesText,
-          parseMode = MarkdownV2,
+          parseMode = MarkdownParseMode,
           replyMarkup = inlineKeyboard {
             row {
               dataButton("📥 Показать еще", "more:${limit + 5}")
@@ -483,7 +483,7 @@ object CommandHandlers {
         send(
           message.chat,
           tagsText,
-          parseMode = MarkdownV2,
+          parseMode = MarkdownParseMode,
           replyMarkup = keyboard
         )
       } catch (e: Exception) {
@@ -527,7 +527,7 @@ object CommandHandlers {
           send(
             message.chat,
             statsText,
-            parseMode = MarkdownV2,
+            parseMode = MarkdownParseMode,
             replyMarkup = keyboard
           )
         } else {
@@ -549,7 +549,7 @@ object CommandHandlers {
             }
           }.trimIndent()
 
-          send(message.chat, notesText, parseMode = MarkdownV2)
+          send(message.chat, notesText, parseMode = MarkdownParseMode)
         }
       } catch (e: Exception) {
         logger.error("Error handling category", e)
@@ -591,7 +591,7 @@ object CommandHandlers {
           }
         }.trimIndent()
 
-        send(message.chat, statsText, parseMode = MarkdownV2)
+        send(message.chat, statsText, parseMode = MarkdownParseMode)
       } catch (e: Exception) {
         logger.error("Error getting stats", e)
         send(message.chat, "❌ Ошибка получения статистики")
@@ -637,7 +637,7 @@ object CommandHandlers {
           message.chat,
           tempMsg.messageId,
           similarText,
-          parseMode = MarkdownV2
+          parseMode = MarkdownParseMode
         )
       } catch (e: Exception) {
         logger.error("Error finding similar", e)

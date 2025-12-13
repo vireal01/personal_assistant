@@ -1,6 +1,7 @@
 package com.vireal.bot.mcp
 
 import com.vireal.shared.models.*
+import dev.inmo.tgbotapi.types.message.abstracts.Message
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -171,10 +172,45 @@ class MCPApiClient(
   }
 
   /**
+   * Определить, какой MCP Tool необходимо использовать
+   */
+  suspend fun decideToolToUse(
+    message: String,
+  ): DecideMCPToolResult {
+    return try {
+      val response = client.get("$baseUrl/api/mcp/tools/decide-tool") {
+        contentType(ContentType.Application.Json)
+        setBody(
+          MCPDecideToolRequest(
+            message = message,
+          )
+        )
+      }
+
+      if (response.status.isSuccess()) {
+        response.body<DecideMCPToolResult>()
+      } else {
+        logger.error("Failed to choose a tool: ${response.status}")
+        DecideMCPToolResult(
+          type = MCPType.UNCATEGORIZED,
+          isError = true
+        )
+      }
+    } catch (e: Exception) {
+      logger.error("Failed to choose a tool", e)
+      DecideMCPToolResult(
+        type = MCPType.UNCATEGORIZED,
+        isError = true
+      )
+    }
+  }
+
+
+  /**
    * Создать MCP запрос с параметрами
    */
-  private fun createToolRequest(
-    toolName: String,
+  fun createToolRequest(
+    type: MCPType,
     userId: Long? = null,
     question: String? = null,
     context: String? = null,
@@ -192,7 +228,7 @@ class MCPApiClient(
     }
 
     return MCPToolRequest(
-      name = toolName,
+      type = type,
       arguments = arguments
     )
   }

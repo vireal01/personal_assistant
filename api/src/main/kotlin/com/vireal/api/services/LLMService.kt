@@ -198,6 +198,35 @@ class LLMService {
     }
   }
 
+  suspend fun decideToolToUse(userMessage: String, tools: List<Tool>): Message? {
+    if (apiKey.isBlank()) {
+      return Message("assistant", "API ключ OpenAI не настроен.", null)
+    }
+    val prompt = buildDecideToolPrompt(userMessage)
+    return if (useNewApi) {
+      val req = ResponsesRequest(
+        model = chatModel,
+        input = listOf(ResponseInputItem(role = "user", content = listOf(ResponseContentBlock(text = prompt)))),
+        tools = tools,
+        tool_choice = "auto",
+      )
+      val result = sendResponsesRequest(req)
+      Message(
+        role = "assistant",
+        content = result?.text ?: "Получен пустой ответ от LLM. id = ${result?.id}",
+        tool_calls = null
+      )
+    } else {
+      val requestBody = ChatCompletionRequest(
+        model = chatModel,
+        messages = listOf(Message(role = "user", content = prompt, tool_calls = null)),
+        tools = tools,
+        tool_choice = "auto"
+      )
+      sendChatCompletions(requestBody)
+    }
+  }
+
   suspend fun generateAnswerKnowledgeBase(context: String, question: String): String {
     if (apiKey.isBlank()) {
       return "API ключ OpenAI не настроен."

@@ -82,6 +82,7 @@ data class SearchFacets(
 data class MCPTool(
   val name: String,
   val description: String,
+  val mcpType: MCPType,
   val inputSchema: JsonElement
 )
 
@@ -90,9 +91,19 @@ data class MCPTool(
  */
 @Serializable
 data class MCPToolRequest(
-  val name: String,
+  val type: MCPType,
   val arguments: Map<String, JsonElement>
 )
+
+/**
+ * Результат выполнения инструмента
+ */
+@Serializable
+data class DecideMCPToolResult(
+  val type: MCPType,
+  val isError: Boolean = false
+)
+
 
 /**
  * Результат выполнения инструмента
@@ -152,16 +163,16 @@ data class MCPQueryWithoutContextRequest(
     val context: String = ""
 )
 
+@Serializable
+data class MCPDecideToolRequest(
+  val message: String,
+)
+
 // ===== OpenAI Tool Calling Models =====
 
 @Serializable
 data class Tool(
     val type: String = "function",
-    val function: FunctionTool
-)
-
-@Serializable
-data class FunctionTool(
     val name: String,
     val description: String,
     val parameters: JsonObject

@@ -55,6 +55,17 @@ class BotService(
     )
   }
 
+  /**
+   * Подобрать нужный инструмент для задачи через MCP
+   */
+  suspend fun decideMCPToolToUse(
+    message: String
+  ): DecideMCPToolResult {
+    return mcpClient.decideToolToUse(
+      message = message
+    )
+  }
+
   // === Legacy методы для обратной совместимости ===
 
 
