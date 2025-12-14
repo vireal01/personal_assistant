@@ -203,14 +203,7 @@ class LLMService {
     if (apiKey.isBlank()) {
       return "API ключ OpenAI не настроен."
     }
-    val prompt = """
-            Контекст:
-            $context
-            ---
-            Вопрос: $question
-            Ответь на вопрос, используя только предоставленный контекст.
-        """.trimIndent()
-
+    val prompt = buildKnowledgeBasedPrompt(context = context, userQuestion = question)
     return if (useNewApi) {
       val req = ResponsesRequest(
         model = chatModel,

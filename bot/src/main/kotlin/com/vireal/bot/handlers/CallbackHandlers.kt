@@ -29,20 +29,26 @@ object CallbackHandlers {
         when {
           data == CallbackState.SAVE_NOTE.name -> {
 
+            println("DEBUG: SAVE_NOTE callback received for user $userId with last message: $lastMessageText")
             if (lastMessageText != null) {
-              val response = botService.createNote(userId, lastMessageText)
-
-              if (response.success) {
+              val response = botService.createNoteMCP(userId, lastMessageText)
+              if (response.isError) {
+                query.message?.let {
+                  editMessageText(
+                    it.chat,
+                    it.messageId,
+                    "❌ Ошибка. Заметка не была сохранена"
+                  )
+                }
+              } else {
                 answerCallbackQuery(query, "✅ Заметка сохранена!")
                 query.message?.let {
                   editMessageText(
                     it.chat,
                     it.messageId,
-                    "✅ Заметка сохранена!\nID: ${response.noteId}"
+                    "✅ Заметка сохранена!"
                   )
                 }
-              } else {
-                answerCallbackQuery(query, "❌ Ошибка")
               }
 
               MessageHandlers.removeUserState(userId)
@@ -106,11 +112,11 @@ object CallbackHandlers {
           }
 
           data == CallbackState.DECLINE_ACTION.name -> {
+            answerCallbackQuery(query, "❌ Действие отклонено")
             query.message?.let {
-              editMessageText(
+              deleteMessage(
                 it.chat,
                 it.messageId,
-                "❌ Действие отклонено"
               )
             }
             val currentState: MessageHandlers.UserState = MessageHandlers.getUserState(userId)

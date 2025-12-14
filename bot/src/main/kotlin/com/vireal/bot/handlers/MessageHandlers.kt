@@ -209,19 +209,19 @@ object MessageHandlers {
     val tempMsg = send(chat, "⏳ Сохраняю заметку...")
 
     try {
-      val response = botService.createNote(userId, text)
+      val response = botService.createNoteMCP(userId, text)
 
-      if (response.success) {
+      if (response.isError) {
         editMessageText(
           chat,
           tempMsg.messageId,
-          "✅ Заметка сохранена!"
+          "❌ Ошибка сохранения"
         )
       } else {
         editMessageText(
           chat,
           tempMsg.messageId,
-          "❌ Ошибка: ${response.message}"
+          "✅ Заметка сохранена!"
         )
       }
     } catch (e: Exception) {

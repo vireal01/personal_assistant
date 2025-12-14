@@ -262,32 +262,17 @@ object CommandHandlers {
       val tempMsg = send(message.chat, "⏳ Сохраняю заметку...")
 
       try {
-        val response = botService.createNote(userId, text)
+        val response = botService.createNoteMCP(userId, text)
 
-        if (response.success) {
-          val successMsg = """
-                        ✅ Заметка сохранена!
-                        📝 ID: `${response.noteId}`
-
-                        Используйте /search для поиска или /ask для вопросов
-                    """.trimIndent()
-
+        if (!response.isError) {
+          editMessageText(message.chat, tempMsg.messageId, "❌ Ошибка при сохранении заметки")
+        } else {
+          val successMsg = "✅ Заметка сохранена!"
           editMessageText(
             message.chat,
             tempMsg.messageId,
             successMsg,
             parseMode = MarkdownParseMode,
-            replyMarkup = inlineKeyboard {
-              row {
-                dataButton("🔍 Найти похожие", "similar:${response.noteId}")
-              }
-            }
-          )
-        } else {
-          editMessageText(
-            message.chat,
-            tempMsg.messageId,
-            "❌ Ошибка: ${response.message}"
           )
         }
       } catch (e: Exception) {

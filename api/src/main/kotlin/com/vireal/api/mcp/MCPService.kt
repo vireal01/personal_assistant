@@ -170,39 +170,10 @@ class MCPService(
     )
   }
 
-  // Поставить действие в очередь на подтверждение и вернуть сообщение подтверждения
-  private fun queuePendingConfirmation(userId: Long, toolName: String, args: JsonObject): MCPToolResult {
-    val pa = PendingAction(
-      id = "${System.currentTimeMillis()}-$userId-$toolName",
-      userId = userId,
-      toolName = toolName,
-      arguments = args
-    )
-    pendingActionsByUser[userId] = pa
-    val previewText = args["text"]?.jsonPrimitive?.content
-    val confirmText = if (toolName == "save_note") {
-      "Вы хотите сохранить заметку с текстом: \"$previewText\"?"
-    } else {
-      "Вы уверены, что хотите выполнить инструмент '$toolName'?"
-    }
-    println("[MCPService] queuePendingConfirmation(userId=$userId, toolName=$toolName) -> pendingId=${pa.id}")
-    return MCPToolResult(
-      content = listOf(
-        MCPContent(type = "text", text = confirmText),
-        MCPContent(type = "meta", metadata = mapOf("pending_action_id" to JsonPrimitive(pa.id)))
-      )
-    )
-  }
-
   suspend fun saveNote(userId: Long, text: String, tags: List<String>, category: String?): MCPToolResult {
     println("[MCPService] saveNote(userId=$userId, textLen=${text.length}, tags=$tags, category=$category) called")
     val response = notesService.addNote(userId = userId, content = text)
-    val msg = if (response.success) {
-      val info = response.message
-      "$info (id=${response.noteId})"
-    } else {
-      response.message
-    }
+    val msg = response.message
     val isErr = !response.success
     println("[MCPService] saveNote -> ${if (isErr) "error" else "ok"}: $msg")
     return MCPToolResult(content = listOf(MCPContent(type = "text", text = msg)), isError = isErr)

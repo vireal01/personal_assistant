@@ -1,23 +1,6 @@
 package com.vireal.api.services
 
-enum class LlmServiceMode {
-  KNOWLEDGE_BASED,
-  GENERATIVE_AI,
-}
-
-
-fun buildPrompt(
-  userQuestion: String,
-  context: String,
-  mode: LlmServiceMode
-): String {
-  return when (mode) {
-    LlmServiceMode.KNOWLEDGE_BASED -> buildKnowledgeBasedPrompt(userQuestion, context)
-    LlmServiceMode.GENERATIVE_AI -> buildGenerativeAIPrompt(userQuestion, context)
-  }
-}
-
-private fun buildKnowledgeBasedPrompt(
+fun buildKnowledgeBasedPrompt(
   userQuestion: String,
   context: String,
 ): String {
@@ -43,30 +26,9 @@ private fun buildKnowledgeBasedPrompt(
   }
 }
 
-private fun buildGenerativeAIPrompt(
-  userQuestion: String,
-  context: String,
-): String {
-  return if (context.isNotEmpty()) {
-    """
-            |Контекст для ответа:
-            |$context
-            |
-            |Вопрос пользователя: $userQuestion
-            |${servicePrompt}
-            """.trimMargin()
-  } else {
-    """
-            |Вопрос: $userQuestion
-            |${servicePrompt}
-            """.trimMargin()
-  }
-}
-
 private val servicePrompt = """
-    |
     |Service Instructions:
-    |Ты виртуальный помощник, который помогает пользователям, используя базу знаний и возможности генеративного ИИ.
+    |Ты виртуальный помощник, который помогает пользователям, используя базу знаний.
     |Твоя задача - предоставлять точные, емкие и полезные ответы на вопросы пользователей.
     |Всегда старайся быть полезным и информативным.
     |Ответ должен быть не длиннее 200 слов. Учи, что пользователь не сможет ответить обратно. Не добавляй Call to action.

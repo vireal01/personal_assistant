@@ -15,10 +15,6 @@ class BotService(
 
   // === Методы для управления заметками (без изменений) ===
 
-  suspend fun createNote(userId: Long, content: String): CreateNoteResponse {
-    return apiClient.createNote(userId, content)
-  }
-
   suspend fun searchNotes(userId: Long, query: String, limit: Int = 5): SearchResult {
     return apiClient.searchNotes(userId, query, limit)
   }
