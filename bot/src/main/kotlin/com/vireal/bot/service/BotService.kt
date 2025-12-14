@@ -66,6 +66,40 @@ class BotService(
     )
   }
 
+  suspend fun createNoteMCP(
+    userId: Long,
+    content: String,
+    tags: List<String> = emptyList(),
+    category: String? = null
+  ): MCPToolResult {
+    return mcpClient.createNote(
+      userId = userId,
+      content = content,
+      tags = tags,
+      category = category
+    )
+  }
+
+  suspend fun executeConfirmedAction(
+    type: MCPType,
+    userId: Long,
+    text: String
+  ): MCPToolResult {
+    return when (type) {
+      MCPType.KNOWLEDGE_BASE_QUERY ->
+        mcpClient.queryWithKnowledgeBase(userId, text)
+
+      MCPType.NOTE_SAVING ->
+        mcpClient.createNote(userId, text)
+
+      MCPType.REMINDER_CREATION ->
+        mcpClient.queryWithKnowledgeBase(userId, text)
+
+      else ->
+        MCPToolResult(content = emptyList(), isError = true)
+    }
+  }
+
   // === Legacy методы для обратной совместимости ===
 
 

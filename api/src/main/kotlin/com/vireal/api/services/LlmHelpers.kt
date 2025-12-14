@@ -83,6 +83,8 @@ internal fun buildDecideToolPrompt(
         |Если задача связана с сохранением заметки или записи, выбери инструмент NOTE_SAVING.
         |Если ты не можешь определить подходящий инструмент, выбери UNCATEGORIZED.
         |
+        |Важно, если текст сообщения боле похож на какую-то сухую информацию, чем на запрос к боту, то выбирай NOTE_SAVING.
+        |
         |Сообщение пользователя: $userMessage
         |
         |Ответь только одним из следующих типов инструментов: KNOWLEDGE_BASE_QUERY, REMINDER_CREATION, NOTE_SAVING, UNCATEGORIZED.

@@ -6,6 +6,7 @@ import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
+import dev.inmo.tgbotapi.types.chat.PreviewChat
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.types.message.content.TextedContent
@@ -15,19 +16,19 @@ import dev.inmo.tgbotapi.types.message.content.TextedContent
  * Обработка вопроса с поиском в базе знаний через MCP
  */
 internal suspend fun BehaviourContext.handleQuestionKnowledgeBase(
-  message: CommonMessage<TextedContent>,
+  chat: PreviewChat,
   question: String,
   botService: BotService
 ) {
-  val userId = message.chat.id.chatId
-  val tempMsg = send(message.chat, "🤔 Поиск в базе знаний...")
+  val userId = chat.id.chatId
+  val tempMsg = send(chat, "🤔 Поиск в базе знаний...")
 
   try {
     val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, question)
 
     if (mcpResult.isError) {
       editMessageText(
-        message.chat,
+        chat,
         tempMsg.messageId,
         "❌ Ошибка: ${mcpResult.content.firstOrNull()?.text ?: "Неизвестная ошибка"}"
       )
@@ -62,11 +63,11 @@ internal suspend fun BehaviourContext.handleQuestionKnowledgeBase(
       }
     }
 
-    editMessageText(message.chat, tempMsg.messageId, responseText)
+    editMessageText(chat, tempMsg.messageId, responseText)
   } catch (e: Exception) {
     logger.error("Error processing question with MCP", e)
     editMessageText(
-      message.chat,
+      chat,
       tempMsg.messageId,
       "❌ Ошибка обработки вопроса"
     )

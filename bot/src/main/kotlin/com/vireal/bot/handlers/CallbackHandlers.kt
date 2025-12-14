@@ -10,10 +10,7 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.*
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
-import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.utils.extensions.raw.message
-import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
-import dev.inmo.tgbotapi.types.message.content.TextedContent
 import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
 import org.slf4j.LoggerFactory
 
@@ -25,15 +22,15 @@ object CallbackHandlers {
     onDataCallbackQuery { query ->
       val userId = query.from.id.chatId
       val data = query.data
+      val state = MessageHandlers.getUserState(userId)
+      val lastMessageText = state?.lastMessage
 
       try {
         when {
           data == CallbackState.SAVE_NOTE.name -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
 
-            if (text != null) {
-              val response = botService.createNote(userId, text)
+            if (lastMessageText != null) {
+              val response = botService.createNote(userId, lastMessageText)
 
               if (response.success) {
                 answerCallbackQuery(query, "✅ Заметка сохранена!")
@@ -53,11 +50,8 @@ object CallbackHandlers {
           }
 
           data == CallbackState.SEARCH_TEXT.name -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
-
-            if (text != null) {
-              val results = botService.searchNotes(userId, text)
+            if (lastMessageText != null) {
+              val results = botService.searchNotes(userId, lastMessageText)
 
               answerCallbackQuery(
                 query,
@@ -83,11 +77,9 @@ object CallbackHandlers {
 
           data == CallbackState.CONFIRM_ACTION.name -> {
             answerCallbackQuery(query, "✅ Действие подтверждено")
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
             val waitingState = state?.waitingFor
             showProgressMessage(query, waitingState = waitingState)
-            if (waitingState == null || text == null) {
+            if (waitingState == null || lastMessageText == null) {
               query.message?.let {
                 editMessageText(
                   it.chat,
@@ -98,12 +90,11 @@ object CallbackHandlers {
               MessageHandlers.removeUserState(userId)
               return@onDataCallbackQuery
             }
-            val mcpRequest = botService.mcpClient.createToolRequest(
+            val result = botService.executeConfirmedAction(
               type = mapWaitingStateToMCPType(waitingState),
               userId = userId,
-              question = text,
+              text = lastMessageText
             )
-            val result = botService.mcpClient.executeTool(mcpRequest)
             query.message?.let {
               editMessageText(
                 it.chat,
@@ -125,14 +116,21 @@ object CallbackHandlers {
             val currentState: MessageHandlers.UserState = MessageHandlers.getUserState(userId)
               ?: throw IllegalStateException("No user state found for user $userId on DECLINE_ACTION")
             MessageHandlers.setUserState(userId, currentState.copy(waitingFor = BotWaitingState.UNSPECIFIED_YET))
-            context.handleSingleMessage(query.message as CommonMessage<TextedContent>, botService)
+            val text = lastMessageText ?: ""
+            val chat = query.message?.chat
+            if (chat == null) {
+              answerCallbackQuery(query, "❌ Внутренняя ошибка: нет чата")
+              return@onDataCallbackQuery
+            }
+            context.handleSingleMessage(
+              text = text,
+              chat = chat,
+              botService = botService
+            )
           }
 
           data == CallbackState.ASK_QUESTION.name -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
-
-            if (text != null) {
+            if (lastMessageText != null) {
               answerCallbackQuery(query, "🤔 Поиск ответа...")
 
               query.message?.let { message ->
@@ -143,8 +141,7 @@ object CallbackHandlers {
                 )
 
                 try {
-                  val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, text)
-
+                  val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, lastMessageText)
                   if (mcpResult.isError) {
                     editMessageText(
                       message.chat,
@@ -158,7 +155,7 @@ object CallbackHandlers {
 
                     // Формируем расширенный ответ
                     val responseText = buildString {
-                      append("❓ Ваш вопрос: $text\n\n")
+                      append("❓ Ваш вопрос: $lastMessageText\n\n")
                       append("💡 Ответ:\n$answer")
 
                       metadata?.let { meta ->
@@ -190,76 +187,6 @@ object CallbackHandlers {
             }
           }
 
-          data.startsWith("similar:") -> {
-            val noteId = data.substringAfter("similar:")
-            val similar = botService.findSimilarNotes(userId, noteId)
-
-            query.message?.let {
-              val text = if (similar.isEmpty()) {
-                "Похожие заметки не найдены"
-              } else {
-                "🔗 Похожие заметки:\n" +
-                  similar.take(3).joinToString("\n") { note ->
-                    "• ${note.content.take(100)}"
-                  }
-              }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("tag:") -> {
-            val tag = data.substringAfter("tag:")
-            val notes = botService.getNotesByTag(userId, tag)
-
-            query.message?.let {
-              val text = "Заметки с тегом #$tag:\n" +
-                notes.take(5).joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("category:") -> {
-            val category = data.substringAfter("category:")
-            val notes = botService.getNotesByCategory(userId, category)
-
-            query.message?.let {
-              val text = "Заметки в категории $category:\n" +
-                notes.take(5).joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("confirm_delete:") -> {
-            val noteId = data.substringAfter("confirm_delete:")
-            val success = botService.deleteNote(noteId)
-
-            if (success) {
-              answerCallbackQuery(query, "✅ Заметка удалена")
-              query.message?.let {
-                editMessageText(
-                  it.chat,
-                  it.messageId,
-                  "✅ Заметка удалена"
-                )
-              }
-            } else {
-              answerCallbackQuery(query, "❌ Ошибка удаления")
-            }
-          }
-
           data == CallbackState.CANCEL_DELETE.name -> {
             answerCallbackQuery(query, "Отменено")
             query.message?.let {
@@ -273,22 +200,6 @@ object CallbackHandlers {
               deleteMessage(it.chat, it.messageId)
             }
             MessageHandlers.removeUserState(userId)
-          }
-
-          data.startsWith("more:") -> {
-            val limit = data.substringAfter("more:").toIntOrNull() ?: 10
-            val notes = botService.getUserNotes(userId, limit)
-
-            query.message?.let {
-              val text = "📚 Ваши заметки (${notes.size}):\n" +
-                notes.joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              editMessageText(it.chat, it.messageId, text)
-            }
-
-            answerCallbackQuery(query)
           }
 
           else -> {

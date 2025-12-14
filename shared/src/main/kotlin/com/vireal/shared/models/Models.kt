@@ -87,15 +87,6 @@ data class MCPTool(
 )
 
 /**
- * Запрос на использование инструмента
- */
-@Serializable
-data class MCPToolRequest(
-  val type: MCPType,
-  val arguments: Map<String, JsonElement>
-)
-
-/**
  * Результат выполнения инструмента
  */
 @Serializable
@@ -112,7 +103,16 @@ data class DecideMCPToolResult(
 data class MCPToolResult(
   val content: List<MCPContent>,
   val isError: Boolean = false
-)
+) {
+  companion object {
+    fun okText(text: String, metadata: Map<String, JsonElement>? = null): MCPToolResult {
+      return MCPToolResult(content = listOf(MCPContent(type = "text", text = text, metadata = metadata)))
+    }
+    fun errText(text: String, metadata: Map<String, JsonElement>? = null): MCPToolResult {
+      return MCPToolResult(content = listOf(MCPContent(type = "text", text = text, metadata = metadata)), isError = true)
+    }
+  }
+}
 
 /**
  * Содержимое результата MCP
@@ -162,6 +162,15 @@ data class MCPQueryWithoutContextRequest(
     val question: String,
     val context: String = ""
 )
+
+@Serializable
+data class MCPSaveNoteRequest(
+  val userId: Long,
+  val text: String,
+  val tags: List<String> = emptyList(),
+  val category: String? = null
+)
+
 
 @Serializable
 data class MCPDecideToolRequest(

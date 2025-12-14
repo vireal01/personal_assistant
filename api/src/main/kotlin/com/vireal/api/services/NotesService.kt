@@ -22,6 +22,8 @@ class NotesService(
   // Очередь для асинхронной обработки embeddings
   private val embeddingQueue = ConcurrentLinkedQueue<Pair<UUID, String>>()
 
+  private val successMessage =  "✅ Запись успешно добавлена"
+
   suspend fun addNote(userId: Long, content: String): CreateNoteResponse {
     return try {
       // 1. Извлекаем теги и категорию
@@ -50,7 +52,7 @@ class NotesService(
         CreateNoteResponse(
           success = true,
           noteId = noteId.toString(),
-          message = "Запись добавлена (embedding создается в фоне)"
+          message = successMessage
         )
       } else {
         // Синхронная генерация - ждем результат
@@ -68,7 +70,7 @@ class NotesService(
         CreateNoteResponse(
           success = true,
           noteId = noteId.toString(),
-          message = if (embedding != null) "Запись добавлена с embedding" else "Запись добавлена без embedding"
+          message = successMessage
         )
       }
     } catch (e: Exception) {
@@ -221,11 +223,5 @@ class NotesService(
     } else {
       false
     }
-  }
-
-  // Очистка ресурсов при остановке сервиса
-  fun shutdown() {
-    serviceScope.cancel()
-    embeddingService.close()
   }
 }
