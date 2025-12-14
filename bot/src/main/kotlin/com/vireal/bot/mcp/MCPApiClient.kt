@@ -1,7 +1,6 @@
 package com.vireal.bot.mcp
 
 import com.vireal.shared.models.*
-import dev.inmo.tgbotapi.types.message.abstracts.Message
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -42,11 +41,6 @@ class MCPApiClient(
       level = LogLevel.INFO
     }
     expectSuccess = false
-  }
-
-  companion object {
-    const val TOOL_QUERY_WITH_CONTEXT = "query_with_knowledge_base"
-    const val TOOL_QUERY_WITHOUT_CONTEXT = "query_without_context"
   }
 
   /**
@@ -205,7 +199,6 @@ class MCPApiClient(
     }
   }
 
-
   /**
    * Создать MCP запрос с параметрами
    */
@@ -231,10 +224,6 @@ class MCPApiClient(
       type = type,
       arguments = arguments
     )
-  }
-
-  fun close() {
-    client.close()
   }
 }
 

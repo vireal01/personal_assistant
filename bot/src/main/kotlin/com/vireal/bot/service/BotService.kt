@@ -10,7 +10,7 @@ import com.vireal.shared.models.*
  */
 class BotService(
   private val apiClient: ApiClient,
-  val mcpClient: MCPApiClient = MCPApiClient(apiClient.baseUrl)
+  val mcpClient: MCPApiClient,
 ) {
 
   // === Методы для управления заметками (без изменений) ===

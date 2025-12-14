@@ -20,7 +20,6 @@ import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.extensions.utils.uRLTextSourceOrNull
 import dev.inmo.tgbotapi.types.ReplyInfo
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
-import dev.inmo.tgbotapi.types.chat.Bot
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
 import dev.inmo.tgbotapi.types.message.textsources.link
@@ -81,7 +80,7 @@ object MessageHandlers {
     when (val text = message.content.text) {
       "📝 Добавить заметку" -> {
         send(message.chat, "Отправьте текст заметки:")
-        userStates[userId] = UserState(waitingFor = BotWaitingState.NOTE_TEXT)
+        userStates[userId] = UserState(waitingFor = BotWaitingState.NOTE_SAVING)
       }
 
 //        "🔍 Поиск" -> {
@@ -91,7 +90,7 @@ object MessageHandlers {
 
       "❓ Задать вопрос" -> {
         send(message.chat, "Задайте ваш вопрос:")
-        userStates[userId] = UserState(waitingFor = BotWaitingState.QUESTION)
+        userStates[userId] = UserState(waitingFor = BotWaitingState.KNOWLEDGE_BASE_QUERY)
       }
 
 //        "📚 Мои заметки" -> {
@@ -112,17 +111,17 @@ object MessageHandlers {
 
         when (state?.waitingFor) {
 
-          BotWaitingState.NOTE_TEXT -> {
+          BotWaitingState.NOTE_SAVING -> {
             handleAddNote(message, formatedText, botService)
             userStates.remove(userId)
           }
 
-          BotWaitingState.SEARCH_QUERY -> {
+          BotWaitingState.SEARCH_NOTES -> {
             handleSearch(message, formatedText, botService)
             userStates.remove(userId)
           }
 
-          BotWaitingState.QUESTION -> {
+          BotWaitingState.KNOWLEDGE_BASE_QUERY -> {
             handleQuestionKnowledgeBase(message, formatedText, botService)
             userStates.remove(userId)
           }
@@ -138,7 +137,11 @@ object MessageHandlers {
           }
 
           BotWaitingState.SET_REMINDER_TIME -> {
-            // TODO: implement reminder creation flow
+            send(
+              message.chat,
+              "Бот пока не поддерживает установку напоминаний через текст. Пожалуйста, выберите другое действие.",
+              replyMarkup = createChooseActionKeyboard()
+            )
           }
 
           null -> {
@@ -261,8 +264,8 @@ object MessageHandlers {
         }
 
         MCPType.KNOWLEDGE_BASE_QUERY -> {
-          val resultText = "Вы хотите сделать запрос к базе знаний по вашему сообщению?"
-          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.QUESTION)
+          val resultText = "🤔Сделать запрос к базе знаний по вашему сообщению?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.KNOWLEDGE_BASE_QUERY)
           editMessageText(
             chat = message.chat,
             messageId = tempMsg.messageId,
@@ -272,8 +275,8 @@ object MessageHandlers {
         }
 
         MCPType.NOTE_SAVING -> {
-          val resultText = "Вы хотите сохранить ваше сообщение как заметку?"
-          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.NOTE_TEXT)
+          val resultText = "📝Сохранить ваше сообщение как заметку?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.NOTE_SAVING)
           editMessageText(
             chat = message.chat,
             messageId = tempMsg.messageId,
@@ -283,7 +286,7 @@ object MessageHandlers {
         }
 
         MCPType.REMINDER_CREATION -> {
-          val resultText = "Вы хотите установить напоминание на основе вашего сообщения?"
+          val resultText = "⏲️Вы хотите установить напоминание?"
           userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.SET_REMINDER_TIME)
           editMessageText(
             chat = message.chat,
@@ -320,11 +323,8 @@ private fun createChooseActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard 
 
 private fun createConfirmActionCategoryChooseKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
   row {
-    dataButton(text = "👍", data = CallbackState.CONFIRM_ACTION.name)
-    dataButton(text = "👎", CallbackState.DECLINE_ACTION.name)
-  }
-  row {
-    dataButton("❌ Отмена", CallbackState.CANCEL_ACTION.name)
+    dataButton(text = "✅Да", data = CallbackState.CONFIRM_ACTION.name)
+    dataButton(text = "👎Нет", data = CallbackState.DECLINE_ACTION.name)
   }
 }
 

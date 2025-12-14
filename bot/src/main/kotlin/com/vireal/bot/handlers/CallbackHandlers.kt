@@ -1,6 +1,8 @@
 package com.vireal.bot.handlers
 
+import com.vireal.bot.handlers.MessageHandlers.handleSingleMessage
 import com.vireal.bot.service.BotService
+import com.vireal.bot.utils.BotWaitingState
 import com.vireal.bot.utils.CallbackState
 import com.vireal.bot.utils.mapWaitingStateToMCPType
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
@@ -10,6 +12,9 @@ import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
 import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.utils.extensions.raw.message
+import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
+import dev.inmo.tgbotapi.types.message.content.TextedContent
+import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
 import org.slf4j.LoggerFactory
 
 object CallbackHandlers {
@@ -81,6 +86,7 @@ object CallbackHandlers {
             val state = MessageHandlers.getUserState(userId)
             val text = state?.lastMessage
             val waitingState = state?.waitingFor
+            showProgressMessage(query, waitingState = waitingState)
             if (waitingState == null || text == null) {
               query.message?.let {
                 editMessageText(
@@ -89,6 +95,7 @@ object CallbackHandlers {
                   "❌ Ошибка: нет ожидаемого действия"
                 )
               }
+              MessageHandlers.removeUserState(userId)
               return@onDataCallbackQuery
             }
             val mcpRequest = botService.mcpClient.createToolRequest(
@@ -96,19 +103,18 @@ object CallbackHandlers {
               userId = userId,
               question = text,
             )
-            botService.mcpClient.executeTool(mcpRequest)
-
+            val result = botService.mcpClient.executeTool(mcpRequest)
             query.message?.let {
               editMessageText(
                 it.chat,
                 it.messageId,
-                "✅ Действие подтверждено"
+                result.content.firstOrNull()?.text ?: "❌ Ошибка получения ответа"
               )
             }
+            MessageHandlers.removeUserState(userId)
           }
 
           data == CallbackState.DECLINE_ACTION.name -> {
-            answerCallbackQuery(query, "❌ Действие отклонено")
             query.message?.let {
               editMessageText(
                 it.chat,
@@ -116,7 +122,10 @@ object CallbackHandlers {
                 "❌ Действие отклонено"
               )
             }
-            MessageHandlers.removeUserState(userId)
+            val currentState: MessageHandlers.UserState = MessageHandlers.getUserState(userId)
+              ?: throw IllegalStateException("No user state found for user $userId on DECLINE_ACTION")
+            MessageHandlers.setUserState(userId, currentState.copy(waitingFor = BotWaitingState.UNSPECIFIED_YET))
+            context.handleSingleMessage(query.message as CommonMessage<TextedContent>, botService)
           }
 
           data == CallbackState.ASK_QUESTION.name -> {
@@ -290,6 +299,22 @@ object CallbackHandlers {
         logger.error("Error handling callback", e)
         answerCallbackQuery(query, "❌ Произошла ошибка")
       }
+    }
+  }
+
+  private suspend fun BehaviourContext.showProgressMessage(query: DataCallbackQuery, waitingState: BotWaitingState?) {
+    val message = when (waitingState) {
+      BotWaitingState.KNOWLEDGE_BASE_QUERY -> "🤔 Поиск в базе знаний..."
+      BotWaitingState.NOTE_SAVING -> "💾 Сохранение заметки..."
+      BotWaitingState.SEARCH_NOTES -> "🔍 Поиск заметок..."
+      else -> "⏳ Пожалуйста, подождите..."
+    }
+    query.message?.let {
+      editMessageText(
+        it.chat,
+        it.messageId,
+        message
+      )
     }
   }
 }

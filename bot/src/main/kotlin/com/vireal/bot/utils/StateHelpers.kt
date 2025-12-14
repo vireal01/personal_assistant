@@ -3,19 +3,19 @@ package com.vireal.bot.utils
 import com.vireal.shared.models.MCPType
 
 enum class BotWaitingState {
-  NOTE_TEXT,
-  SEARCH_QUERY,
-  QUESTION,
+  NOTE_SAVING,
+  SEARCH_NOTES,
+  KNOWLEDGE_BASE_QUERY,
   UNSPECIFIED_YET,
   SET_REMINDER_TIME,
 }
 
 fun mapWaitingStateToMCPType(state: BotWaitingState): MCPType {
   return when (state) {
-    BotWaitingState.NOTE_TEXT -> MCPType.NOTE_SAVING
-    BotWaitingState.QUESTION -> MCPType.KNOWLEDGE_BASE_QUERY
+    BotWaitingState.NOTE_SAVING -> MCPType.NOTE_SAVING
+    BotWaitingState.KNOWLEDGE_BASE_QUERY -> MCPType.KNOWLEDGE_BASE_QUERY
     BotWaitingState.SET_REMINDER_TIME -> MCPType.REMINDER_CREATION
-    BotWaitingState.SEARCH_QUERY -> MCPType.UNCATEGORIZED
+    BotWaitingState.SEARCH_NOTES -> MCPType.UNCATEGORIZED
     BotWaitingState.UNSPECIFIED_YET -> MCPType.UNCATEGORIZED
   }
 }
