@@ -1,13 +1,17 @@
 package com.vireal.bot.handlers
 
+import com.vireal.bot.handlers.MessageHandlers.handleSingleMessage
 import com.vireal.bot.service.BotService
+import com.vireal.bot.utils.BotWaitingState
+import com.vireal.bot.utils.CallbackState
+import com.vireal.bot.utils.mapWaitingStateToMCPType
 import dev.inmo.tgbotapi.extensions.behaviour_builder.BehaviourContext
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.*
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
-import dev.inmo.tgbotapi.extensions.api.send.send
 import dev.inmo.tgbotapi.extensions.utils.extensions.raw.message
+import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
 import org.slf4j.LoggerFactory
 
 object CallbackHandlers {
@@ -18,39 +22,42 @@ object CallbackHandlers {
     onDataCallbackQuery { query ->
       val userId = query.from.id.chatId
       val data = query.data
+      val state = MessageHandlers.getUserState(userId)
+      val lastMessageText = state?.lastMessage
 
       try {
         when {
-          data == "save_note" -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
+          data == CallbackState.SAVE_NOTE.name -> {
 
-            if (text != null) {
-              val response = botService.createNote(userId, text)
-
-              if (response.success) {
+            println("DEBUG: SAVE_NOTE callback received for user $userId with last message: $lastMessageText")
+            if (lastMessageText != null) {
+              val response = botService.createNoteMCP(userId, lastMessageText)
+              if (response.isError) {
+                query.message?.let {
+                  editMessageText(
+                    it.chat,
+                    it.messageId,
+                    "❌ Ошибка. Заметка не была сохранена"
+                  )
+                }
+              } else {
                 answerCallbackQuery(query, "✅ Заметка сохранена!")
                 query.message?.let {
                   editMessageText(
                     it.chat,
                     it.messageId,
-                    "✅ Заметка сохранена!\nID: ${response.noteId}"
+                    "✅ Заметка сохранена!"
                   )
                 }
-              } else {
-                answerCallbackQuery(query, "❌ Ошибка")
               }
 
               MessageHandlers.removeUserState(userId)
             }
           }
 
-          data == "search_text" -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
-
-            if (text != null) {
-              val results = botService.searchNotes(userId, text)
+          data == CallbackState.SEARCH_TEXT.name -> {
+            if (lastMessageText != null) {
+              val results = botService.searchNotes(userId, lastMessageText)
 
               answerCallbackQuery(
                 query,
@@ -74,11 +81,62 @@ object CallbackHandlers {
             }
           }
 
-          data == "ask_question" -> {
-            val state = MessageHandlers.getUserState(userId)
-            val text = state?.lastMessage
+          data == CallbackState.CONFIRM_ACTION.name -> {
+            answerCallbackQuery(query, "✅ Действие подтверждено")
+            val waitingState = state?.waitingFor
+            showProgressMessage(query, waitingState = waitingState)
+            if (waitingState == null || lastMessageText == null) {
+              query.message?.let {
+                editMessageText(
+                  it.chat,
+                  it.messageId,
+                  "❌ Ошибка: нет ожидаемого действия"
+                )
+              }
+              MessageHandlers.removeUserState(userId)
+              return@onDataCallbackQuery
+            }
+            val result = botService.executeConfirmedAction(
+              type = mapWaitingStateToMCPType(waitingState),
+              userId = userId,
+              text = lastMessageText
+            )
+            query.message?.let {
+              editMessageText(
+                it.chat,
+                it.messageId,
+                result.content.firstOrNull()?.text ?: "❌ Ошибка получения ответа"
+              )
+            }
+            MessageHandlers.removeUserState(userId)
+          }
 
-            if (text != null) {
+          data == CallbackState.DECLINE_ACTION.name -> {
+            answerCallbackQuery(query, "❌ Действие отклонено")
+            query.message?.let {
+              deleteMessage(
+                it.chat,
+                it.messageId,
+              )
+            }
+            val currentState: MessageHandlers.UserState = MessageHandlers.getUserState(userId)
+              ?: throw IllegalStateException("No user state found for user $userId on DECLINE_ACTION")
+            MessageHandlers.setUserState(userId, currentState.copy(waitingFor = BotWaitingState.UNSPECIFIED_YET))
+            val text = lastMessageText ?: ""
+            val chat = query.message?.chat
+            if (chat == null) {
+              answerCallbackQuery(query, "❌ Внутренняя ошибка: нет чата")
+              return@onDataCallbackQuery
+            }
+            context.handleSingleMessage(
+              text = text,
+              chat = chat,
+              botService = botService
+            )
+          }
+
+          data == CallbackState.ASK_QUESTION.name -> {
+            if (lastMessageText != null) {
               answerCallbackQuery(query, "🤔 Поиск ответа...")
 
               query.message?.let { message ->
@@ -89,8 +147,7 @@ object CallbackHandlers {
                 )
 
                 try {
-                  val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, text)
-
+                  val mcpResult = botService.askQuestionWithKnowledgeBaseMCP(userId, lastMessageText)
                   if (mcpResult.isError) {
                     editMessageText(
                       message.chat,
@@ -104,7 +161,7 @@ object CallbackHandlers {
 
                     // Формируем расширенный ответ
                     val responseText = buildString {
-                      append("❓ Ваш вопрос: $text\n\n")
+                      append("❓ Ваш вопрос: $lastMessageText\n\n")
                       append("💡 Ответ:\n$answer")
 
                       metadata?.let { meta ->
@@ -136,105 +193,19 @@ object CallbackHandlers {
             }
           }
 
-          data.startsWith("similar:") -> {
-            val noteId = data.substringAfter("similar:")
-            val similar = botService.findSimilarNotes(userId, noteId)
-
-            query.message?.let {
-              val text = if (similar.isEmpty()) {
-                "Похожие заметки не найдены"
-              } else {
-                "🔗 Похожие заметки:\n" +
-                  similar.take(3).joinToString("\n") { note ->
-                    "• ${note.content.take(100)}"
-                  }
-              }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("tag:") -> {
-            val tag = data.substringAfter("tag:")
-            val notes = botService.getNotesByTag(userId, tag)
-
-            query.message?.let {
-              val text = "Заметки с тегом #$tag:\n" +
-                notes.take(5).joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("category:") -> {
-            val category = data.substringAfter("category:")
-            val notes = botService.getNotesByCategory(userId, category)
-
-            query.message?.let {
-              val text = "Заметки в категории $category:\n" +
-                notes.take(5).joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              send(it.chat, text)
-            }
-
-            answerCallbackQuery(query)
-          }
-
-          data.startsWith("confirm_delete:") -> {
-            val noteId = data.substringAfter("confirm_delete:")
-            val success = botService.deleteNote(noteId)
-
-            if (success) {
-              answerCallbackQuery(query, "✅ Заметка удалена")
-              query.message?.let {
-                editMessageText(
-                  it.chat,
-                  it.messageId,
-                  "✅ Заметка удалена"
-                )
-              }
-            } else {
-              answerCallbackQuery(query, "❌ Ошибка удаления")
-            }
-          }
-
-          data == "cancel_delete" -> {
+          data == CallbackState.CANCEL_DELETE.name -> {
             answerCallbackQuery(query, "Отменено")
             query.message?.let {
               deleteMessage(it.chat, it.messageId)
             }
           }
 
-          data == "cancel" -> {
+          data == CallbackState.CANCEL_ACTION.name -> {
             answerCallbackQuery(query, "Отменено")
             query.message?.let {
               deleteMessage(it.chat, it.messageId)
             }
             MessageHandlers.removeUserState(userId)
-          }
-
-          data.startsWith("more:") -> {
-            val limit = data.substringAfter("more:").toIntOrNull() ?: 10
-            val notes = botService.getUserNotes(userId, limit)
-
-            query.message?.let {
-              val text = "📚 Ваши заметки (${notes.size}):\n" +
-                notes.joinToString("\n") { note ->
-                  "• ${note.content.take(100)}"
-                }
-
-              editMessageText(it.chat, it.messageId, text)
-            }
-
-            answerCallbackQuery(query)
           }
 
           else -> {
@@ -245,6 +216,22 @@ object CallbackHandlers {
         logger.error("Error handling callback", e)
         answerCallbackQuery(query, "❌ Произошла ошибка")
       }
+    }
+  }
+
+  private suspend fun BehaviourContext.showProgressMessage(query: DataCallbackQuery, waitingState: BotWaitingState?) {
+    val message = when (waitingState) {
+      BotWaitingState.KNOWLEDGE_BASE_QUERY -> "🤔 Поиск в базе знаний..."
+      BotWaitingState.NOTE_SAVING -> "💾 Сохранение заметки..."
+      BotWaitingState.SEARCH_NOTES -> "🔍 Поиск заметок..."
+      else -> "⏳ Пожалуйста, подождите..."
+    }
+    query.message?.let {
+      editMessageText(
+        it.chat,
+        it.messageId,
+        message
+      )
     }
   }
 }

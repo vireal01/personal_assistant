@@ -1,145 +1,130 @@
 package com.vireal.api.mcp
 
-import com.vireal.api.data.repository.NotesRepository
-import com.vireal.api.data.repository.VectorSearchRepository
-import com.vireal.api.services.*
-import com.vireal.shared.models.*
+import com.vireal.api.services.HybridSearchService
+import com.vireal.api.services.LLMService
+import com.vireal.api.services.NotesService
+import com.vireal.shared.models.DecideMCPToolResult
+import com.vireal.shared.models.MCPContent
+import com.vireal.shared.models.MCPDecideToolRequest
+import com.vireal.shared.models.MCPTool
+import com.vireal.shared.models.MCPToolResult
+import com.vireal.shared.models.MCPType
+import com.vireal.shared.models.Note
 import kotlinx.serialization.json.*
+import java.time.LocalDateTime
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * MCP сервис, предоставляющий инструменты для работы с базой знаний
+ * MCP сервис, который использует LLM для выбора и вызова инструментов.
  */
 class MCPService(
-  private val notesRepository: NotesRepository = NotesRepository(),
-  private val vectorRepository: VectorSearchRepository = VectorSearchRepository(),
-  private val embeddingService: EmbeddingService = EmbeddingService(),
   private val llmService: LLMService = LLMService(),
   private val hybridSearchService: HybridSearchService = HybridSearchService(),
-  private val tagService: TagExtractionService = TagExtractionService()
+  private val notesService: NotesService = NotesService(),
+  // private val reminderService: ReminderService = ReminderService() // Будет добавлено в будущем
 ) {
+  private val toolRegistry = ToolRegistry(llmService)
+  private val json = Json { ignoreUnknownKeys = true }
 
-  companion object {
-    const val TOOL_QUERY_WITH_CONTEXT = "query_with_knowledge_base"
-    const val TOOL_QUERY_WITHOUT_CONTEXT = "query_without_context"
+  // Простейшее состояние ожидающего подтверждения действия (MVP)
+  private data class PendingAction(
+    val id: String,
+    val userId: Long,
+    val toolName: String,
+    val arguments: JsonObject,
+    val createdAt: Long = System.currentTimeMillis()
+  )
 
-    private val AVAILABLE_TOOLS = setOf(TOOL_QUERY_WITH_CONTEXT, TOOL_QUERY_WITHOUT_CONTEXT)
-  }
+  private val pendingActionsByUser: MutableMap<Long, PendingAction> = ConcurrentHashMap()
+
+  // Простейшее хранилище заметок (MVP), чтобы завершить флоу
+  private val notesByUser: MutableMap<Long, MutableList<Note>> = ConcurrentHashMap()
 
   /**
-   * Получить список доступных инструментов
+   * Вернуть список доступных MCP инструментов для клиента (упрощенная схема).
    */
   fun getAvailableTools(): List<MCPTool> {
-    return listOf(
+    println("[MCPService] getAvailableTools() called")
+    val tools = toolRegistry.allTools.map { tool ->
       MCPTool(
-        name = TOOL_QUERY_WITH_CONTEXT,
-        description = "Выполняет поиск в базе знаний и генерирует ответ на основе найденного контекста",
-        inputSchema = buildJsonObject {
-          put("type", "object")
-          put("properties", buildJsonObject {
-            put("userId", buildJsonObject {
-              put("type", "integer")
-              put("description", "ID пользователя")
-            })
-            put("question", buildJsonObject {
-              put("type", "string")
-              put("description", "Вопрос пользователя")
-            })
-            put("tags", buildJsonObject {
-              put("type", "array")
-              put("items", buildJsonObject {
-                put("type", "string")
-              })
-              put("description", "Опциональные теги для фильтрации")
-            })
-            put("category", buildJsonObject {
-              put("type", "string")
-              put("description", "Опциональная категория для фильтрации")
-            })
-          })
-          put("required", buildJsonArray {
-            add("userId")
-            add("question")
-          })
-        }
-      ),
-      MCPTool(
-        name = TOOL_QUERY_WITHOUT_CONTEXT,
-        description = "Генерирует ответ на вопрос без поиска в базе знаний, используя только предоставленный контекст",
-        inputSchema = buildJsonObject {
-          put("type", "object")
-          put("properties", buildJsonObject {
-            put("question", buildJsonObject {
-              put("type", "string")
-              put("description", "Вопрос пользователя")
-            })
-            put("context", buildJsonObject {
-              put("type", "string")
-              put("description", "Дополнительный контекст для ответа")
-            })
-          })
-          put("required", buildJsonArray {
-            add("question")
-          })
-        }
+        name = tool.name,
+        description = tool.description,
+        mcpType = parseMCPType(tool.name),
+        inputSchema = tool.parameters,
       )
-    )
-  }
-
-  /**
-   * Выполнить инструмент MCP
-   */
-  suspend fun executeTool(request: MCPToolRequest): MCPToolResult {
-    require(request.name in AVAILABLE_TOOLS) { "Неизвестный инструмент: ${request.name}" }
-
-    return try {
-      when (request.name) {
-        TOOL_QUERY_WITH_CONTEXT -> executeQueryWithKnowledgeBase(request.arguments)
-        TOOL_QUERY_WITHOUT_CONTEXT -> executeQueryWithoutContext(request.arguments)
-        else -> throw IllegalStateException("Достигнут недостижимый код для инструмента: ${request.name}")
-      }
-    } catch (e: IllegalArgumentException) {
-      createErrorResult("Ошибка в параметрах запроса: ${e.message}")
-    } catch (e: Exception) {
-      // TODO: Добавить логирование ошибки e
-      createErrorResult("Внутренняя ошибка сервера при выполнении инструмента.")
     }
+    println("[MCPService] getAvailableTools() -> ${tools.map { it.name }}")
+    return tools
   }
 
   /**
-   * Выполнить запрос с поиском в базе знаний
+   * Определить, какой MCP Tool необходимо использовать
    */
-  private suspend fun executeQueryWithKnowledgeBase(arguments: Map<String, JsonElement>): MCPToolResult {
-    val userId = arguments["userId"]?.jsonPrimitive?.longOrNull
-      ?: throw IllegalArgumentException("Параметр 'userId' отсутствует или имеет неверный формат")
+  suspend fun decideToolToUse(
+    request: MCPDecideToolRequest,
+  ): DecideMCPToolResult {
+    val message = request.message
+    println("[MCPService] decideToolToUse(message=\"$message\") called")
+    val llmDecision = llmService.decideToolToUse(userMessage = message, tools = toolRegistry.allTools)
+    println("[MCPService] decideToolToUse -> LLM decision: tool_calls=${llmDecision?.tool_calls}, content=${llmDecision?.content}")
 
-    val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
+    if (llmDecision?.content == null) {
+      println("[MCPService] decideToolToUse -> LLM decision is null")
+      return DecideMCPToolResult(isError = true, type = MCPType.UNCATEGORIZED)
+    }
 
-    val tags = arguments["tags"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
-    val category = arguments["category"]?.jsonPrimitive?.contentOrNull
+    val type = parseMCPType(llmDecision)
+    println("[MCPService] decideToolToUse -> parsed MCPType: $type")
 
-    // Измеряем время поиска
-    val startTime = System.currentTimeMillis()
-
-    // Выполняем поиск с помощью HybridSearchService
-    val searchResult = hybridSearchService.search(
-      userId = userId,
-      query = question,
-      limit = 10
+    return DecideMCPToolResult(
+      isError = false,
+      type = type,
     )
+  }
 
-    val searchTimeMs = System.currentTimeMillis() - startTime
+  /**
+   * Публичный метод: поиск в базе знаний и генерация ответа.
+   */
+  suspend fun queryWithKnowledgeBase(
+    userId: Long,
+    question: String,
+    tags: List<String> = emptyList(),
+    category: String? = null
+  ): MCPToolResult {
+    println("[MCPService] queryWithKnowledgeBase(userId=$userId, question=\"$question\") called")
+    // tags/category пока не используются в поиске; зарезервировано для будущего
+    val result = executeQueryWithKnowledgeBase(question, userId)
+    println("[MCPService] queryWithKnowledgeBase -> returned text content")
+    return result
+  }
 
-    // Формируем контекст из найденных записей
-    val context = buildContext(searchResult.notes, question)
+  /**
+   * Публичный метод: ответ без поиска в базе знаний (по предоставленному контексту).
+   */
+  suspend fun queryWithoutKnowledgeBase(
+    question: String,
+    context: String = ""
+  ): MCPToolResult {
+    println("[MCPService] queryWithoutKnowledgeBase(question=\"$question\") called")
+    val answer = llmService.generateAnswerKnowledgeBase(context, question)
+    val result = MCPToolResult(content = listOf(MCPContent(type = "text", text = answer)))
+    println("[MCPService] queryWithoutKnowledgeBase -> returned text content")
+    return result
+  }
 
-    // Генерируем ответ
+  /**
+   * Выполняет поиск в базе знаний.
+   */
+  private suspend fun executeQueryWithKnowledgeBase(question: String, userId: Long): MCPToolResult {
+    println("[MCPService] executeQueryWithKnowledgeBase(userId=$userId, question=\"$question\") called")
+    val searchResult = hybridSearchService.search(userId = userId, query = question, limit = 10)
+    val context = buildContext(searchResult.notes)
     val answer = if (context.isNotEmpty()) {
       llmService.generateAnswerKnowledgeBase(context, question)
     } else {
-      "В базе знаний не найдено информации по вашему вопросу."
+      "В базе знаний не найдено релевантной информации по вашему вопросу."
     }
-
+    println("[MCPService] executeQueryWithKnowledgeBase -> contextNotes=${searchResult.notes.size}, totalFound=${searchResult.totalFound}")
     return MCPToolResult(
       content = listOf(
         MCPContent(
@@ -147,13 +132,7 @@ class MCPService(
           text = answer,
           metadata = mapOf(
             "sources_count" to JsonPrimitive(searchResult.notes.size),
-            "search_time_ms" to JsonPrimitive(searchTimeMs),
-            "total_found" to JsonPrimitive(searchResult.totalFound),
-            "sources" to JsonArray(
-              searchResult.notes.take(3).map { note ->
-                JsonPrimitive("${note.content.take(100)}...")
-              }
-            )
+            "total_found" to JsonPrimitive(searchResult.totalFound)
           )
         )
       )
@@ -161,61 +140,74 @@ class MCPService(
   }
 
   /**
-   * Выполнить запрос без поиска в базе знаний
+   * ЗАГЛУШКА: Создает напоминание.
    */
-  private suspend fun executeQueryWithoutContext(arguments: Map<String, JsonElement>): MCPToolResult {
-    val question = arguments["question"]?.jsonPrimitive?.contentOrNull
-      ?: throw IllegalArgumentException("Параметр 'question' отсутствует")
+  private fun createReminder(description: String?, datetime: String?, userId: Long): MCPToolResult {
+    println("[MCPService] createReminder(userId=$userId, description=$description, datetime=$datetime) called")
+    if (description == null || datetime == null) {
+      return createErrorResult("LLM не смог извлечь описание или дату для напоминания.")
+    }
 
-    val context = arguments["context"]?.jsonPrimitive?.contentOrNull ?: ""
-
-    // Генерируем ответ без поиска в базе
-    val answer = llmService.generateAnswerRaw(context, question)
-
+    // --- Начало ЗАГЛУШКИ ---
+    println("[MCPService] createReminder -> stub execution")
+    val parsedTime = try {
+      LocalDateTime.parse(datetime)
+    } catch (e: Exception) {
+      null
+    }
+    val confirmationText = if (parsedTime != null) {
+      "Хорошо, я напомню вам '$description' в $parsedTime."
+    } else {
+      "Напоминание для '$description создано, но не удалось распознать время."
+    }
     return MCPToolResult(
       content = listOf(
         MCPContent(
           type = "text",
-          text = answer,
-          metadata = mapOf(
-            "context_provided" to JsonPrimitive(context.isNotEmpty()),
-            "context_length" to JsonPrimitive(context.length)
-          )
+          text = confirmationText
         )
       )
     )
   }
 
-  /**
-   * Формирует контекст для LLM из найденных записей
-   */
-  private fun buildContext(notes: List<Note>, question: String): String {
-    if (notes.isEmpty()) return ""
-
-    val contextBuilder = StringBuilder()
-    contextBuilder.append("Контекст из базы знаний:\n\n")
-
-    notes.forEachIndexed { index, note ->
-      contextBuilder.append("${index + 1}. ${note.content}")
-      if (note.tags.isNotEmpty()) {
-        contextBuilder.append("\nТеги: ${note.tags.joinToString(", ")}")
-      }
-      if (note.category != null) {
-        contextBuilder.append("\nКатегория: ${note.category}")
-      }
-      contextBuilder.append("\n\n")
-    }
-
-    return contextBuilder.toString()
+  suspend fun saveNote(userId: Long, text: String, tags: List<String>, category: String?): MCPToolResult {
+    println("[MCPService] saveNote(userId=$userId, textLen=${text.length}, tags=$tags, category=$category) called")
+    val response = notesService.addNote(userId = userId, content = text)
+    val msg = response.message
+    val isErr = !response.success
+    println("[MCPService] saveNote -> ${if (isErr) "error" else "ok"}: $msg")
+    return MCPToolResult(content = listOf(MCPContent(type = "text", text = msg)), isError = isErr)
   }
 
   /**
-   * Создать результат с ошибкой
+   * Поиск заметок пользователя через NotesService и возврат результата в MCP формате.
    */
+  suspend fun searchNotes(userId: Long, query: String): MCPToolResult {
+    println("[MCPService] searchNotes(userId=$userId, query=\"$query\") called")
+    return try {
+      val res = notesService.searchNotes(userId, query)
+      val context = buildContext(res.notes)
+      val meta = mapOf(
+        "sources_count" to JsonPrimitive(res.notes.size),
+        "total_found" to JsonPrimitive(res.totalFound)
+      )
+      MCPToolResult(
+        content = listOf(
+          MCPContent(type = "text", text = context.ifEmpty { "Ничего не найдено по запросу." }, metadata = meta)
+        )
+      )
+    } catch (e: Exception) {
+      println("[MCPService] searchNotes ERROR -> ${e.message}")
+      MCPToolResult(content = listOf(MCPContent(type = "text", text = "Ошибка поиска: ${e.message}")), isError = true)
+    }
+  }
+
+  private fun buildContext(notes: List<Note>): String {
+    return notes.joinToString("\n---\n") { it.content }
+  }
+
   private fun createErrorResult(message: String): MCPToolResult {
-    return MCPToolResult(
-      content = listOf(MCPContent("text", message)),
-      isError = true
-    )
+    println("[MCPService] ERROR -> $message")
+    return MCPToolResult(content = listOf(MCPContent("text", message)), isError = true)
   }
 }

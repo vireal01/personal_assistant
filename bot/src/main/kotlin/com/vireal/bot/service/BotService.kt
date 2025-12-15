@@ -10,14 +10,10 @@ import com.vireal.shared.models.*
  */
 class BotService(
   private val apiClient: ApiClient,
-  val mcpClient: MCPApiClient = MCPApiClient(apiClient.baseUrl)
+  val mcpClient: MCPApiClient,
 ) {
 
   // === Методы для управления заметками (без изменений) ===
-
-  suspend fun createNote(userId: Long, content: String): CreateNoteResponse {
-    return apiClient.createNote(userId, content)
-  }
 
   suspend fun searchNotes(userId: Long, query: String, limit: Int = 5): SearchResult {
     return apiClient.searchNotes(userId, query, limit)
@@ -53,6 +49,51 @@ class BotService(
       question = question,
       context = context
     )
+  }
+
+  /**
+   * Подобрать нужный инструмент для задачи через MCP
+   */
+  suspend fun decideMCPToolToUse(
+    message: String
+  ): DecideMCPToolResult {
+    return mcpClient.decideToolToUse(
+      message = message
+    )
+  }
+
+  suspend fun createNoteMCP(
+    userId: Long,
+    content: String,
+    tags: List<String> = emptyList(),
+    category: String? = null
+  ): MCPToolResult {
+    return mcpClient.createNote(
+      userId = userId,
+      content = content,
+      tags = tags,
+      category = category
+    )
+  }
+
+  suspend fun executeConfirmedAction(
+    type: MCPType,
+    userId: Long,
+    text: String
+  ): MCPToolResult {
+    return when (type) {
+      MCPType.KNOWLEDGE_BASE_QUERY ->
+        mcpClient.queryWithKnowledgeBase(userId, text)
+
+      MCPType.NOTE_SAVING ->
+        mcpClient.createNote(userId, text)
+
+      MCPType.REMINDER_CREATION ->
+        mcpClient.queryWithKnowledgeBase(userId, text)
+
+      else ->
+        MCPToolResult(content = emptyList(), isError = true)
+    }
   }
 
   // === Legacy методы для обратной совместимости ===

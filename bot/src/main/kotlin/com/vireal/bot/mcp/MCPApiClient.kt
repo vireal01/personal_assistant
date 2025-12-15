@@ -43,11 +43,6 @@ class MCPApiClient(
     expectSuccess = false
   }
 
-  companion object {
-    const val TOOL_QUERY_WITH_CONTEXT = "query_with_knowledge_base"
-    const val TOOL_QUERY_WITHOUT_CONTEXT = "query_without_context"
-  }
-
   /**
    * Получить список доступных MCP инструментов
    */
@@ -63,34 +58,6 @@ class MCPApiClient(
     } catch (e: Exception) {
       logger.error("Error getting MCP tools", e)
       emptyList()
-    }
-  }
-
-  /**
-   * Выполнить MCP инструмент
-   */
-  suspend fun executeTool(request: MCPToolRequest): MCPToolResult {
-    return try {
-      val response = client.post("$baseUrl/api/mcp/tools/execute") {
-        contentType(ContentType.Application.Json)
-        setBody(request)
-      }
-
-      if (response.status.isSuccess()) {
-        response.body<MCPToolResult>()
-      } else {
-        logger.error("Failed to execute tool: ${response.status}")
-        MCPToolResult(
-          content = listOf(MCPContent("text", "Ошибка сервера: ${response.status}")),
-          isError = true
-        )
-      }
-    } catch (e: Exception) {
-      logger.error("Error executing MCP tool", e)
-      MCPToolResult(
-        content = listOf(MCPContent("text", "Ошибка: ${e.message}")),
-        isError = true
-      )
     }
   }
 
@@ -171,34 +138,67 @@ class MCPApiClient(
   }
 
   /**
-   * Создать MCP запрос с параметрами
+   * Определить, какой MCP Tool необходимо использовать
    */
-  private fun createToolRequest(
-    toolName: String,
-    userId: Long? = null,
-    question: String? = null,
-    context: String? = null,
-    tags: List<String>? = null,
-    category: String? = null
-  ): MCPToolRequest {
-    val arguments = buildMap<String, JsonElement> {
-      userId?.let { put("userId", JsonPrimitive(it)) }
-      question?.let { put("question", JsonPrimitive(it)) }
-      context?.let { put("context", JsonPrimitive(it)) }
-      tags?.takeIf { it.isNotEmpty() }?.let {
-        put("tags", JsonArray(it.map { tag -> JsonPrimitive(tag) }))
+  suspend fun decideToolToUse(
+    message: String,
+  ): DecideMCPToolResult {
+    return try {
+      val response = client.post("$baseUrl/api/mcp/intent/decide") {
+        contentType(ContentType.Application.Json)
+        setBody(
+          MCPDecideToolRequest(
+            message = message,
+          )
+        )
       }
-      category?.let { put("category", JsonPrimitive(it)) }
-    }
 
-    return MCPToolRequest(
-      name = toolName,
-      arguments = arguments
-    )
+      if (response.status.isSuccess()) {
+        response.body<DecideMCPToolResult>()
+      } else {
+        logger.error("Failed to choose a tool: ${response.status}")
+        DecideMCPToolResult(
+          type = MCPType.UNCATEGORIZED,
+          isError = true
+        )
+      }
+    } catch (e: Exception) {
+      logger.error("Failed to choose a tool", e)
+      DecideMCPToolResult(
+        type = MCPType.UNCATEGORIZED,
+        isError = true
+      )
+    }
   }
 
-  fun close() {
-    client.close()
+  suspend fun createNote(
+    userId: Long,
+    content: String,
+    tags: List<String> = emptyList(),
+    category: String? = null
+  ): MCPToolResult {
+    return try {
+      val response = client.post("$baseUrl/api/mcp/tool/save-note") {
+        contentType(ContentType.Application.Json)
+        setBody(
+          MCPSaveNoteRequest(
+            userId = userId,
+            text = content,
+            tags = tags,
+            category = category
+          )
+        )
+      }
+
+      if (response.status.isSuccess()) {
+        response.body<MCPToolResult>()
+      } else {
+        MCPToolResult.errText(text = "Server error: ${response.status}")
+      }
+    } catch (e: Exception) {
+      logger.error("Error creating note", e)
+      MCPToolResult.errText(text = e.message ?: "Unknown error")
+    }
   }
 }
 

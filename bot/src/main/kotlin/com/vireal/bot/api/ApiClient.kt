@@ -3,8 +3,6 @@ package com.vireal.bot.api
 import com.vireal.shared.models.CreateNoteRequest
 import com.vireal.shared.models.CreateNoteResponse
 import com.vireal.shared.models.Note
-import com.vireal.shared.models.QueryRequest
-import com.vireal.shared.models.QueryResponse
 import com.vireal.shared.models.SearchResult
 import com.vireal.shared.models.UpdateNoteRequest
 import io.ktor.client.HttpClient

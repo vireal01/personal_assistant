@@ -1,6 +1,9 @@
 package com.vireal.bot.handlers
 
 import com.vireal.bot.service.BotService
+import com.vireal.bot.utils.BotWaitingState
+import com.vireal.bot.utils.CallbackState
+import com.vireal.shared.models.MCPType
 import dev.inmo.kslog.common.error
 import dev.inmo.kslog.common.logger
 import dev.inmo.tgbotapi.extensions.api.edit.text.editMessageText
@@ -15,8 +18,10 @@ import dev.inmo.tgbotapi.extensions.utils.textLinkTextSourceOrNull
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.dataButton
 import dev.inmo.tgbotapi.extensions.utils.types.buttons.inlineKeyboard
 import dev.inmo.tgbotapi.extensions.utils.uRLTextSourceOrNull
+import dev.inmo.tgbotapi.requests.chat.get.GetChat
 import dev.inmo.tgbotapi.types.ReplyInfo
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
+import dev.inmo.tgbotapi.types.chat.PreviewChat
 import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
 import dev.inmo.tgbotapi.types.message.textsources.link
@@ -32,14 +37,8 @@ object MessageHandlers {
 
   data class UserState(
     var lastMessage: String? = null,
-    var waitingFor: WaitingState? = null
+    var waitingFor: BotWaitingState? = BotWaitingState.UNSPECIFIED_YET
   )
-
-  enum class WaitingState {
-    NOTE_TEXT,
-    SEARCH_QUERY,
-    QUESTION
-  }
 
   private data class ForwardBatch(
     val messages: MutableList<CommonMessage<TextedContent>>
@@ -56,7 +55,14 @@ object MessageHandlers {
       when {
         isReplyProcessed(message, botService) -> return@onTextedMediaContent
         isHandledBatchOfForwardedMessages(message) -> return@onTextedMediaContent
-        else -> handleSingleMessage(message = message, botService = botService)
+        else -> {
+          val text = message.content.processTextAndTextSources()
+          handleSingleMessage(
+            text = text,
+            chat = message.chat,
+            botService = botService
+          )
+        }
       }
     }
 
@@ -70,20 +76,31 @@ object MessageHandlers {
         isReplyProcessed(message, botService) -> return@onText
         isHandledBatchOfForwardedMessages(message) -> return@onText
         message.content.text.startsWith("/") -> return@onText
-        else -> handleSingleMessage(message = message, botService = botService)
+        else -> {
+          val formatedText = message.content.processTextAndTextSources()
+          if (formatedText.isEmpty()) {
+            return@onText
+          }
+          handleSingleMessage(
+            text = formatedText,
+            chat = message.chat,
+            botService = botService
+          )
+        }
       }
     }
   }
 
   suspend fun BehaviourContext.handleSingleMessage(
-    message: CommonMessage<TextedContent>,
+    text: String,
+    chat: PreviewChat,
     botService: BotService
   ) {
-    val userId = message.chat.id.chatId
-    when (val text = message.content.text) {
+    val userId = chat.id.chatId
+    when (text) {
       "📝 Добавить заметку" -> {
-        send(message.chat, "Отправьте текст заметки:")
-        userStates[userId] = UserState(waitingFor = WaitingState.NOTE_TEXT)
+        send(chat, "Отправьте текст заметки:")
+        userStates[userId] = UserState(waitingFor = BotWaitingState.NOTE_SAVING)
       }
 
 //        "🔍 Поиск" -> {
@@ -92,8 +109,8 @@ object MessageHandlers {
 //        }
 
       "❓ Задать вопрос" -> {
-        send(message.chat, "Задайте ваш вопрос:")
-        userStates[userId] = UserState(waitingFor = WaitingState.QUESTION)
+        send(chat, "Задайте ваш вопрос:")
+        userStates[userId] = UserState(waitingFor = BotWaitingState.KNOWLEDGE_BASE_QUERY)
       }
 
 //        "📚 Мои заметки" -> {
@@ -109,33 +126,49 @@ object MessageHandlers {
 //        }
 
       else -> {
-        val formatedText = message.content.processTextAndTextSources()
         val state = userStates[userId]
 
         when (state?.waitingFor) {
-          WaitingState.NOTE_TEXT -> {
-            handleAddNote(message, formatedText, botService)
+
+          BotWaitingState.NOTE_SAVING -> {
+            handleAddNote(chat = chat, text = text, botService = botService)
             userStates.remove(userId)
           }
 
-          WaitingState.SEARCH_QUERY -> {
-            handleSearch(message, formatedText, botService)
+          BotWaitingState.SEARCH_NOTES -> {
+            handleSearch(chat = chat, query = text, botService = botService)
             userStates.remove(userId)
           }
 
-          WaitingState.QUESTION -> {
-            handleQuestionKnowledgeBase(message, formatedText, botService)
+          BotWaitingState.KNOWLEDGE_BASE_QUERY -> {
+            handleQuestionKnowledgeBase(chat = chat, question = text, botService = botService)
             userStates.remove(userId)
           }
 
-          else -> {
+          BotWaitingState.UNSPECIFIED_YET -> {
             userStates[userId] = UserState(lastMessage = text)
 
             send(
-              message.chat,
+              chat,
               "Что сделать с этим текстом?",
-              replyMarkup = createActionKeyboard()
+              replyMarkup = createChooseActionKeyboard()
             )
+          }
+
+          BotWaitingState.SET_REMINDER_TIME -> {
+            // TODO: Handle reminder time setting
+            // ==== TEMPORARY HANDLER ====
+            userStates[userId] = UserState(lastMessage = text, waitingFor = BotWaitingState.UNSPECIFIED_YET)
+            send(
+              chat,
+              "Бот пока не поддерживает установку напоминаний через текст. Пожалуйста, выберите другое действие.",
+              replyMarkup = createChooseActionKeyboard()
+            )
+            // ============================
+          }
+
+          null -> {
+            handleDecideToolToUse(chat, text, botService)
           }
         }
       }
@@ -168,33 +201,33 @@ object MessageHandlers {
   }
 
   private suspend fun BehaviourContext.handleAddNote(
-    message: CommonMessage<TextedContent>,
+    chat: PreviewChat,
     text: String,
     botService: BotService
   ) {
-    val userId = message.chat.id.chatId
-    val tempMsg = send(message.chat, "⏳ Сохраняю заметку...")
+    val userId = chat.id.chatId
+    val tempMsg = send(chat, "⏳ Сохраняю заметку...")
 
     try {
-      val response = botService.createNote(userId, text)
+      val response = botService.createNoteMCP(userId, text)
 
-      if (response.success) {
+      if (response.isError) {
         editMessageText(
-          message.chat,
+          chat,
           tempMsg.messageId,
-          "✅ Заметка сохранена!"
+          "❌ Ошибка сохранения"
         )
       } else {
         editMessageText(
-          message.chat,
+          chat,
           tempMsg.messageId,
-          "❌ Ошибка: ${response.message}"
+          "✅ Заметка сохранена!"
         )
       }
     } catch (e: Exception) {
       logger.error("Error adding note", e)
       editMessageText(
-        message.chat,
+        chat,
         tempMsg.messageId,
         "❌ Ошибка сохранения"
       )
@@ -202,12 +235,12 @@ object MessageHandlers {
   }
 
   private suspend fun BehaviourContext.handleSearch(
-    message: CommonMessage<TextedContent>,
+    chat: PreviewChat,
     query: String,
     botService: BotService
   ) {
-    val userId = message.chat.id.chatId
-    val tempMsg = send(message.chat, "🔍 Ищу...")
+    val userId = chat.id.chatId
+    val tempMsg = send(chat, "🔍 Ищу...")
 
     try {
       val results = botService.searchNotes(userId, query)
@@ -223,10 +256,73 @@ object MessageHandlers {
         }
       }
 
-      editMessageText(message.chat, tempMsg.messageId, resultText)
+      editMessageText(chat, tempMsg.messageId, resultText)
     } catch (e: Exception) {
       logger.error("Error searching", e)
-      editMessageText(message.chat, tempMsg.messageId, "❌ Ошибка поиска")
+      editMessageText(chat, tempMsg.messageId, "❌ Ошибка поиска")
+    }
+  }
+
+  private suspend fun BehaviourContext.handleDecideToolToUse(
+    chat: PreviewChat,
+    formatedText: String,
+    botService: BotService,
+  ) {
+    val tempMsg = send(chat, "🤖 Определяем, что делать с вашим сообщением...")
+
+    try {
+      val result = botService.decideMCPToolToUse(formatedText)
+      val userId = chat.id.chatId
+
+      when (result.type) {
+        MCPType.UNCATEGORIZED -> {
+          val resultText =
+            "🤖 Мы не смогли автоматически определить, что с этим сделать. Пожалуйста, выберите действие ниже."
+          editMessageText(
+            chat = chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createChooseActionKeyboard()
+          )
+        }
+
+        MCPType.KNOWLEDGE_BASE_QUERY -> {
+          val resultText = "🤔Сделать запрос к базе знаний по вашему сообщению?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.KNOWLEDGE_BASE_QUERY)
+          editMessageText(
+            chat = chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+
+        MCPType.NOTE_SAVING -> {
+          val resultText = "📝Сохранить ваше сообщение как заметку?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.NOTE_SAVING)
+          editMessageText(
+            chat = chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+
+        MCPType.REMINDER_CREATION -> {
+          val resultText = "⏲️Вы хотите установить напоминание?"
+          userStates[userId] = UserState(lastMessage = formatedText, waitingFor = BotWaitingState.SET_REMINDER_TIME)
+          editMessageText(
+            chat = chat,
+            messageId = tempMsg.messageId,
+            text = resultText,
+            replyMarkup = createConfirmActionCategoryChooseKeyboard()
+          )
+        }
+      }
+
+    } catch (e: Exception) {
+      logger.error("Error MCP deciding", e)
+      editMessageText(chat, tempMsg.messageId, "❌ Ошибка обработки")
     }
   }
 
@@ -237,13 +333,21 @@ object MessageHandlers {
   }
 }
 
-private fun createActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
+
+private fun createChooseActionKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
   row {
-    dataButton("📝 Сохранить заметку", "save_note")
-    dataButton("❓ Задать вопрос", "ask_question")
+    dataButton("📝 Сохранить заметку", CallbackState.SAVE_NOTE.name)
+    dataButton("❓ Задать вопрос", CallbackState.ASK_QUESTION.name)
   }
   row {
-    dataButton("❌ Отмена", "cancel")
+    dataButton("❌ Отмена", CallbackState.CANCEL_ACTION.name)
+  }
+}
+
+private fun createConfirmActionCategoryChooseKeyboard(): InlineKeyboardMarkup = inlineKeyboard {
+  row {
+    dataButton(text = "✅Да", data = CallbackState.CONFIRM_ACTION.name)
+    dataButton(text = "👎Нет", data = CallbackState.DECLINE_ACTION.name)
   }
 }
 
@@ -270,7 +374,7 @@ private suspend fun BehaviourContext.processForwardBatch(
     send(
       chat,
       messageText,
-      replyMarkup = createActionKeyboard()
+      replyMarkup = createChooseActionKeyboard()
     )
   } catch (e: Exception) {
     logger.error(e)

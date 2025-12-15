@@ -5,6 +5,7 @@ import com.vireal.bot.config.BotConfig
 import com.vireal.bot.handlers.CallbackHandlers
 import com.vireal.bot.handlers.CommandHandlers
 import com.vireal.bot.handlers.MessageHandlers
+import com.vireal.bot.mcp.MCPApiClient
 import com.vireal.bot.service.BotService
 import dev.inmo.tgbotapi.bot.ktor.telegramBot
 import dev.inmo.tgbotapi.extensions.api.bot.getMe
@@ -16,7 +17,8 @@ private val logger = LoggerFactory.getLogger("Main")
 suspend fun main() {
   val config = BotConfig.load()
   val apiClient = ApiClient(config.apiBaseUrl)
-  val botService = BotService(apiClient)
+  val mcpApiClient = MCPApiClient(apiClient.baseUrl)
+  val botService = BotService(apiClient = apiClient, mcpClient = mcpApiClient)
 
   val bot = telegramBot(config.telegramToken)
 

@@ -82,17 +82,19 @@ data class SearchFacets(
 data class MCPTool(
   val name: String,
   val description: String,
+  val mcpType: MCPType,
   val inputSchema: JsonElement
 )
 
 /**
- * Запрос на использование инструмента
+ * Результат выполнения инструмента
  */
 @Serializable
-data class MCPToolRequest(
-  val name: String,
-  val arguments: Map<String, JsonElement>
+data class DecideMCPToolResult(
+  val type: MCPType,
+  val isError: Boolean = false
 )
+
 
 /**
  * Результат выполнения инструмента
@@ -101,7 +103,16 @@ data class MCPToolRequest(
 data class MCPToolResult(
   val content: List<MCPContent>,
   val isError: Boolean = false
-)
+) {
+  companion object {
+    fun okText(text: String, metadata: Map<String, JsonElement>? = null): MCPToolResult {
+      return MCPToolResult(content = listOf(MCPContent(type = "text", text = text, metadata = metadata)))
+    }
+    fun errText(text: String, metadata: Map<String, JsonElement>? = null): MCPToolResult {
+      return MCPToolResult(content = listOf(MCPContent(type = "text", text = text, metadata = metadata)), isError = true)
+    }
+  }
+}
 
 /**
  * Содержимое результата MCP
@@ -148,6 +159,54 @@ data class MCPQueryWithContextRequest(
 
 @Serializable
 data class MCPQueryWithoutContextRequest(
-  val question: String,
-  val context: String = ""
+    val question: String,
+    val context: String = ""
+)
+
+@Serializable
+data class MCPSaveNoteRequest(
+  val userId: Long,
+  val text: String,
+  val tags: List<String> = emptyList(),
+  val category: String? = null
+)
+
+
+@Serializable
+data class MCPDecideToolRequest(
+  val message: String,
+)
+
+// ===== OpenAI Tool Calling Models =====
+
+@Serializable
+data class Tool(
+    val type: String = "function",
+    val name: String,
+    val description: String,
+    val parameters: JsonObject
+)
+
+@Serializable
+data class ToolChoice(
+    val type: String = "function",
+    val function: FunctionChoice
+)
+
+@Serializable
+data class FunctionChoice(
+    val name: String
+)
+
+@Serializable
+data class ToolCall(
+    val id: String,
+    val type: String,
+    val function: FunctionCall
+)
+
+@Serializable
+data class FunctionCall(
+    val name: String,
+    val arguments: String // Аргументы приходят как строка JSON
 )

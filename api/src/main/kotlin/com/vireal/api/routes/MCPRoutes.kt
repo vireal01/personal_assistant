@@ -1,93 +1,79 @@
 package com.vireal.api.routes
 
 import com.vireal.api.mcp.MCPService
-import com.vireal.shared.models.MCPToolRequest
+import com.vireal.shared.models.DecideMCPToolResult
+import com.vireal.shared.models.MCPDecideToolRequest
+import com.vireal.shared.models.MCPQueryWithContextRequest
+import com.vireal.shared.models.MCPQueryWithoutContextRequest
+import com.vireal.shared.models.MCPSaveNoteRequest
+import com.vireal.shared.models.MCPToolResult
+import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.json.*
 
 /**
- * MCP маршруты для работы с инструментами
+ * Главный роут для обработки всех запросов пользователя через MCP.
  */
 fun Route.mcpRoutes() {
-    val mcpService = MCPService()
+  val mcpService = MCPService()
 
-    route("/api/mcp") {
+  route("/api/mcp") {
 
-        /**
-         * Получить список доступных инструментов
-         */
-        get("/tools") {
-            val tools = mcpService.getAvailableTools()
-            call.respond(tools)
-        }
-
-        /**
-         * Выполнить инструмент MCP
-         */
-        post("/tools/execute") {
-            val request = call.receive<MCPToolRequest>()
-            val result = mcpService.executeTool(request)
-            call.respond(result)
-        }
-
-        /**
-         * Упрощенный эндпоинт для запроса с поиском в базе знаний
-         */
-        post("/query/with-context") {
-            val params = call.receive<JsonObject>()
-            val userId = params["userId"]?.jsonPrimitive?.longOrNull
-                ?: throw IllegalArgumentException("Параметр 'userId' является обязательным")
-
-            val question = params["question"]?.jsonPrimitive?.contentOrNull
-                ?: throw IllegalArgumentException("Параметр 'question' является обязательным")
-
-            val tags = params["tags"]?.jsonArray?.mapNotNull {
-                it.jsonPrimitive.contentOrNull
-            } ?: emptyList()
-
-            val category = params["category"]?.jsonPrimitive?.contentOrNull
-
-            val request = MCPToolRequest(
-                name = MCPService.TOOL_QUERY_WITH_CONTEXT,
-                arguments = buildMap {
-                    put("userId", JsonPrimitive(userId))
-                    put("question", JsonPrimitive(question))
-                    if (tags.isNotEmpty()) {
-                        put("tags", JsonArray(tags.map { JsonPrimitive(it) }))
-                    }
-                    if (category != null) {
-                        put("category", JsonPrimitive(category))
-                    }
-                }
-            )
-
-            val result = mcpService.executeTool(request)
-            call.respond(result)
-        }
-
-        /**
-         * Упрощенный эндпоинт для запроса без поиска в базе знаний
-         */
-        post("/query/without-context") {
-            val params = call.receive<JsonObject>()
-            val question = params["question"]?.jsonPrimitive?.contentOrNull
-                ?: throw IllegalArgumentException("Параметр 'question' является обязательным")
-
-            val context = params["context"]?.jsonPrimitive?.contentOrNull ?: ""
-
-            val request = MCPToolRequest(
-                name = MCPService.TOOL_QUERY_WITHOUT_CONTEXT,
-                arguments = mapOf(
-                    "question" to JsonPrimitive(question),
-                    "context" to JsonPrimitive(context)
-                )
-            )
-
-            val result = mcpService.executeTool(request)
-            call.respond(result)
-        }
+    // Список доступных инструментов
+    get("/tools") {
+      println("[MCPRoutes] GET /api/mcp/tools called")
+      val tools = mcpService.getAvailableTools()
+      println("[MCPRoutes] /tools returned ${tools.size} tools: ${tools.map { it.name }}")
+      call.respond(tools)
     }
+
+    post("/tool/save-note") {
+      println("[MCPRoutes] POST /api/mcp/tool/save-note called")
+      val req = call.receive<MCPSaveNoteRequest>()
+      val result = mcpService.saveNote(
+        userId = req.userId,
+        text = req.text,
+        tags = req.tags,
+        category = req.category,
+      )
+      println("[MCPRoutes] /tool/save-note result isError=${result.isError}")
+      call.respond<MCPToolResult>(HttpStatusCode.OK, result)
+    }
+
+    // Список доступных инструментов
+    post("/intent/decide") {
+      println("[MCPRoutes] POST /api/mcp/intent/decide called")
+      val req = call.receive<MCPDecideToolRequest>()
+      val result = mcpService.decideToolToUse(req)
+      call.respond<DecideMCPToolResult>(result)
+    }
+
+    // Запрос с контекстом (ожидается ботом)
+    post("/query/with-context") {
+      val req = call.receive<MCPQueryWithContextRequest>()
+      println("[MCPRoutes] POST /api/mcp/query/with-context called, userId=${req.userId}, question=\"${req.question}\" tags=${req.tags} category=${req.category}")
+      val result = mcpService.queryWithKnowledgeBase(
+        userId = req.userId,
+        question = req.question,
+        tags = req.tags,
+        category = req.category
+      )
+      println("[MCPRoutes] /query/with-context result isError=${result.isError}")
+      call.respond<MCPToolResult>(HttpStatusCode.OK, result)
+    }
+
+    // Запрос без контекста (ожидается ботом)
+    post("/query/without-context") {
+      val req = call.receive<MCPQueryWithoutContextRequest>()
+      println("[MCPRoutes] POST /api/mcp/query/without-context called, question=\"${req.question}\" contextLen=${req.context.length}")
+      val result = mcpService.queryWithoutKnowledgeBase(
+        question = req.question,
+        context = req.context
+      )
+      println("[MCPRoutes] /query/without-context result isError=${result.isError}")
+      call.respond<MCPToolResult>(HttpStatusCode.OK, result)
+    }
+  }
 }
